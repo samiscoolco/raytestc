@@ -25,9 +25,9 @@ Texture2D gun_tex;
 int mapX = 8, mapY = 8, mapS = 64;
 int map[] = {
     1, 1, 1, 1, 1, 1, 1, 1,
-    1, 0, 1, 0, 0, 0, 0, 1,
-    1, 0, 1, 0, 0, 0, 0, 1,
-    1, 0, 1, 2, 0, 1, 1, 1,
+    1, 0, 0, 0, 0, 0, 0, 1,
+    1, 0, 0, 0, 0, 0, 0, 1,
+    1, 0, 0, 2, 0, 1, 1, 1,
     2, 0, 0, 0, 0, 0, 0, 2,
     1, 0, 0, 0, 0, 0, 0, 1,
     1, 0, 0, 0, 0, 0, 0, 1,
@@ -75,7 +75,7 @@ void drawPlayer()
 
 void drawGame()
 {
-    int r, mx, my, mp, dof, walltex;
+    int r, mx, my, mp, dof, walltex, walltexv, walltexh;
     float rx, ry, ra, xo, yo;
 
     ra = pa - DEG2RAD * 30;
@@ -136,7 +136,7 @@ void drawGame()
                 hy = ry;
                 disH = dist(px, py, hx, hy, ra);
                 dof = vdep;
-                walltex = map[mp];
+                walltexh = map[mp];
             }
             else
             {
@@ -182,7 +182,7 @@ void drawGame()
                 vy = ry;
                 disV = dist(px, py, vx, vy, ra);
                 dof = vdep; // hit wall
-                walltex = map[mp];
+                walltexv = map[mp];
             }
             else
             {
@@ -200,6 +200,7 @@ void drawGame()
             ry = vy;
             hitdist = disV;
             wallSide = 0;
+            walltex = walltexv;
         }
         if (disH < disV)
         {
@@ -207,6 +208,7 @@ void drawGame()
             ry = hy;
             hitdist = disH;
             wallSide = 1;
+            walltex = walltexh;
         }
         if (mode == 0)
         {
@@ -254,7 +256,7 @@ void drawGame()
                     c.b = c.b * 0.5;
                 }
 
-                DrawRectangle(r * 9, pxy + lineO, 9, 9, c);
+                DrawRectangle(r * 8, pxy + lineO, 8, 8, c);
                 ty += ty_step;
             }
 
@@ -300,7 +302,7 @@ void init()
 
     img = LoadImage("gun.png");
 
-    Color green = (Color){0, 255, 0, 255};  
+    Color green = (Color){0, 255, 0, 255};
     Color transparent = (Color){0, 0, 0, 0};
     ImageColorReplace(&img, green, transparent);
     gun_tex = LoadTextureFromImage(img);
@@ -416,19 +418,19 @@ int main(void)
         ClearBackground(DARKGRAY);
         DrawRectangle(0, 200, 520, 500, GRAY);
         drawGame();
-        
-        if(mode==1){
-           float scale = 2.5f; // scale factor
-    
+
+        if (mode == 1)
+        {
+            float scale = 2.5f; // scale factor
+
             int texW = gun_tex.width * scale;
             int texH = gun_tex.height * scale;
-        
+
             // Position: center horizontally, align to bottom
             int drawX = (screenWidth / 2) - (texW / 2);
             int drawY = screenHeight - texH;
-            DrawTextureEx(gun_tex, (Vector2){drawX, drawY}, 0.0f, scale, WHITE); 
+            DrawTextureEx(gun_tex, (Vector2){drawX, drawY}, 0.0f, scale, WHITE);
         }
-        
 
         char myString[50];
         char floatString[20];
