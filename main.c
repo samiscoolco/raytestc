@@ -16,28 +16,50 @@ float movespeed;
 float maxspeed;
 float turnspeed;
 float friction;
+float bob;
+float boba;
 float dt;
-int mode;
+bool mode;
 int vdep;
 
 Texture2D gun_tex;
+float shootFrame;
+bool shooting;
 
-int mapX = 8, mapY = 8, mapS = 64;
+int mapS = 64;
+int mapX = 16, mapY = 16;
 int map[] = {
-    1, 1, 1, 1, 1, 1, 1, 1,
-    1, 0, 0, 0, 0, 0, 0, 1,
-    1, 0, 0, 0, 0, 0, 0, 1,
-    1, 0, 0, 2, 0, 1, 1, 1,
-    2, 0, 0, 0, 0, 0, 0, 2,
-    1, 0, 0, 0, 0, 0, 0, 1,
-    1, 0, 0, 0, 0, 0, 0, 1,
-    1, 1, 1, 1, 2, 1, 1, 1};
+    1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 1,
+    2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 2,
+    1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1};
 
 Color *wall1;
 Color *wall2;
 Color *wall3;
 
+Texture2D wall1tex;
+Texture2D wall2tex;
+
+Color *floor1;
+Color *floor2;
+Color *floor3;
+
 Color *walltextures[3];
+Color *floortextures[3];
+Texture2D walltextures2D[3];
 
 float dist(float ax, float ay, float bx, float by, float ang)
 {
@@ -45,38 +67,43 @@ float dist(float ax, float ay, float bx, float by, float ang)
 }
 void drawMap2D()
 {
-    int x, y, xo, yo;
+    int x, y;
+    float newmaps = screenWidth / mapX;
+    float scalefactor = newmaps / mapS;
+    int mapitem;
     Color sqColor;
+    Texture2D sqTex;
+
     for (y = 0; y < mapY; y++)
     {
         for (x = 0; x < mapX; x++)
         {
-            if (map[y * mapX + x] == 1)
+            mapitem = map[y * mapX + x];
+            DrawRectangle(x * newmaps, y * newmaps, newmaps, newmaps, BLACK);
+            if (mapitem >= 1)
             {
-                sqColor = GRAY;
+                sqTex = walltextures2D[mapitem - 1];
+                DrawTextureEx(sqTex, (Vector2){x * newmaps, y * newmaps}, 0.0f, 1, WHITE);
             }
             else
             {
-                sqColor = LIGHTGRAY;
+                DrawRectangle((x * newmaps) + 1, (y * newmaps) + 1, newmaps - 1, newmaps - 1, LIGHTGRAY);
             }
-            xo = x * mapS;
-            yo = y * mapS;
-            DrawRectangle(x * mapS, y * mapS, mapS, mapS, BLACK);
-            DrawRectangle((x * mapS) + 1, (y * mapS) + 1, mapS - 1, mapS - 1, sqColor);
+
+            DrawCircle(px * scalefactor, py * scalefactor, 5, RED);
+            DrawLineEx((Vector2){px * scalefactor, py * scalefactor}, (Vector2){px * scalefactor + (pdx * 10), py * scalefactor + (pdy * 10)}, 3.0f, MAROON);
         }
     }
 }
 
-void drawPlayer()
-{
-    DrawCircle(px, py, 5, RED);
-    DrawLineEx((Vector2){px, py}, (Vector2){px + (pdx * 5), py + (pdy * 5)}, 3.0f, MAROON);
-}
-
 void drawGame()
 {
-    int r, mx, my, mp, dof, walltex, walltexv, walltexh;
+    int r, mx, my, mp, dof;
     float rx, ry, ra, xo, yo;
+
+    int walltex = -1;
+    int walltexv = -1;
+    int walltexh = -1;
 
     ra = pa - DEG2RAD * 30;
     if (ra < 0)
@@ -87,11 +114,9 @@ void drawGame()
     {
         ra -= TPI;
     }
-    if (mode == 0)
+    if (!mode)
     {
         drawMap2D();
-
-        drawPlayer();
     }
     for (r = 0; r < 60; r++)
     {
@@ -129,7 +154,7 @@ void drawGame()
             mx = (int)(rx) >> 6;
             my = (int)(ry) >> 6;
             mp = my * mapX + mx;
-            if (mp > 0 && mp < mapX * mapY && map[mp] >= 1)
+            if (mp > 0 && mp < mapX * mapY && map[mp] >= 1 && map[mp] <= 3)
             {
                 // hit wall
                 hx = rx;
@@ -176,7 +201,7 @@ void drawGame()
             my = (int)(ry) >> 6;
             mp = my * mapX + mx;
 
-            if (mp > 0 && mp < mapX * mapY && map[mp] >= 1)
+            if (mp > 0 && mp < mapX * mapY && map[mp] >= 1 && map[mp] <= 3)
             {
                 vx = rx;
                 vy = ry;
@@ -210,27 +235,28 @@ void drawGame()
             wallSide = 1;
             walltex = walltexh;
         }
-        if (mode == 0)
-        {
+        // if (mode == 0)
+        // {
 
-            DrawLineEx((Vector2){px, py}, (Vector2){rx, ry}, 1.0f, RED);
-        }
-        if (mode == 1)
+        //     DrawLineEx((Vector2){px, py}, (Vector2){rx, ry}, 1.0f, RED);
+        // }
+        if (mode && walltex >= 0 && walltex <= 3)
         {
             if (hitdist <= 0)
             {
                 hitdist = 1;
             }
-            float lineH = (mapS * 320) / hitdist;
+            float lineH = (mapS * screenHeight) / hitdist;
             float ty_step = 32 / (float)lineH;
             float ty_off = 0;
 
-            if (lineH > 320)
+            if (lineH > screenHeight)
             {
-                ty_off = (lineH - 320) / 2.0;
-                lineH = 320;
+                ty_off = (lineH - screenHeight) / 2.0;
+                lineH = screenHeight;
             }
-            float lineO = 230 - lineH / 2;
+            float lineO = (screenHeight / 2) - lineH / 2;
+            lineO = lineO + boba;
 
             int pxy;
             float ty = ty_off * ty_step;
@@ -256,8 +282,35 @@ void drawGame()
                     c.b = c.b * 0.5;
                 }
 
-                DrawRectangle(r * 8, pxy + lineO, 8, 8, c);
+                DrawRectangle(r * 9, pxy + lineO, 9, 9, c);
                 ty += ty_step;
+            }
+
+            // draw floors
+            int floorStart = lineO + lineH;
+            float camY = (screenHeight / 2.0f) + boba;
+
+            for (int y = floorStart; y < screenHeight; y++)
+            {
+                float perspective = camY / (y - camY);
+                float fx = px + cos(ra) * perspective * 64;
+                float fy = py + sin(ra) * perspective * 64;
+
+                int tx = ((int)fx) % 64;
+                int ty = ((int)fy) % 64;
+
+                if (tx < 0)
+                {
+                    tx += 64;
+                }
+
+                if (ty < 0)
+                {
+                    ty += 64;
+                }
+
+                Color fc = floortextures[0][(ty / 2) * 32 + (tx / 2)];
+                DrawRectangle(r * 9, y, 9, 9, fc);
             }
 
             // DrawLineEx((Vector2){(r * 8.6), lineO}, (Vector2){(r * 8.6), lineH + lineO}, 8.6f, wallCol);
@@ -278,38 +331,49 @@ void drawGame()
 void init()
 {
     printf("initializing...");
-    mode = 1;
+    mode = true;
     px = 200;
     py = 300;
     pa = 0;
     speed = 0;
-    vdep = 8;
+    vdep = 16;
+    bob = 0.00f;
+    shootFrame = 0;
 
     movespeed = 20;   // acceleration
-    maxspeed = 120;   // max running speed
-    turnspeed = 7.5f; // turning
+    maxspeed = 145;   // max running speed
+    turnspeed = 5.5f; // turning
     friction = 90;    // decel
 
     printf("loading textures...");
 
-    Image img = LoadImage("wall.png");
+    Image img = LoadImage("floor.png");
+    floor1 = LoadImageColors(img);
+    UnloadImage(img);
+
+    img = LoadImage("wall.png");
     wall2 = LoadImageColors(img);
+    wall2tex = LoadTextureFromImage(img);
     UnloadImage(img);
 
     img = LoadImage("wall2.png");
+    wall1tex = LoadTextureFromImage(img);
     wall1 = LoadImageColors(img);
     UnloadImage(img);
 
-    img = LoadImage("gun.png");
-
-    Color green = (Color){0, 255, 0, 255};
+    img = LoadImage("shotgun_sheet.png");
+    Color green = (Color){255, 0, 255, 255};
     Color transparent = (Color){0, 0, 0, 0};
     ImageColorReplace(&img, green, transparent);
     gun_tex = LoadTextureFromImage(img);
     UnloadImage(img);
 
+    walltextures2D[0] = wall1tex;
+    walltextures2D[1] = wall2tex;
     walltextures[0] = wall1;
     walltextures[1] = wall2;
+
+    floortextures[0] = floor1;
 
     printf("starting game...");
 }
@@ -350,13 +414,17 @@ void buttons()
         {
             speed -= friction * dt;
             if (speed < 0)
+            {
                 speed = 0;
+            }
         }
         else if (speed < 0)
         {
             speed += friction * dt;
             if (speed > 0)
+            {
                 speed = 0;
+            }
         }
     }
 
@@ -367,7 +435,13 @@ void buttons()
 
     if (IsKeyPressed(KEY_TAB))
     {
+
         mode = !mode;
+    }
+
+    if (IsKeyPressed(KEY_SPACE) && !shooting)
+    {
+        shooting = true;
     }
 }
 
@@ -416,20 +490,45 @@ int main(void)
 
         BeginDrawing();
         ClearBackground(DARKGRAY);
-        DrawRectangle(0, 200, 520, 500, GRAY);
+        DrawRectangle(0, 250, 512, 512, GRAY);
         drawGame();
 
-        if (mode == 1)
+        if (bob < 40)
         {
-            float scale = 2.5f; // scale factor
+            bob += speed * dt;
+        }
+        else
+        {
 
-            int texW = gun_tex.width * scale;
-            int texH = gun_tex.height * scale;
+            bob = 0;
+        }
+        if (speed == 0 && bob > 0)
+        {
+            bob -= 10 * dt;
+        }
 
-            // Position: center horizontally, align to bottom
-            int drawX = (screenWidth / 2) - (texW / 2);
-            int drawY = screenHeight - texH;
-            DrawTextureEx(gun_tex, (Vector2){drawX, drawY}, 0.0f, scale, WHITE);
+        float n = sin(bob / 40.0f * 2 * PI);
+        float out = 5.5f + 4.5f * n;
+        boba = out;
+        // bobbing off for now
+        //boba = 0;
+
+        if (shooting)
+        {
+            shootFrame += 15 * dt;
+            if (shootFrame >= 3)
+            {
+                shootFrame = 0;
+                shooting = false;
+            }
+        }
+
+        if (mode)
+        {
+
+            // DrawTextureRec(gun_tex, (Rectangle){0, 0, 64, 64}, (Vector2){drawX, drawY}, WHITE);
+            DrawTexturePro(gun_tex, (Rectangle){(int)shootFrame * 64, 0, 64, 64}, (Rectangle){130, 300, 256, 256}, (Vector2){0, 0}, 0, WHITE);
+            // DrawTextureEx(gun_tex, (Vector2){drawX, drawY}, 0.0f, scale, WHITE);
         }
 
         char myString[50];
