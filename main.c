@@ -1,7 +1,25 @@
 #include "raylib.h"
 #include <math.h>
 #include <string.h>
+#include <stdlib.h>
+#include <stdint.h>
 #include <stdio.h>
+
+#define TEXTURE_WIDTH 64
+#define TEXTURE_HEIGHT 64
+#define TEXTURE_SIZE (TEXTURE_WIDTH * TEXTURE_HEIGHT)
+#define SCREEN_SCALE 8
+#define SCREEN_WIDTH (TEXTURE_WIDTH * SCREEN_SCALE)
+#define SCREEN_HEIGHT (TEXTURE_HEIGHT * SCREEN_SCALE)
+#define MAX_CHUNKS 2048
+
+
+const char *VSWAP_FILE = "VSWAP.WL6";
+const char *PAL_FILE = "wolf.pal";
+
+unsigned int chunk_offsets[MAX_CHUNKS];
+int sprite_start = 0;
+Color palette[256];
 
 const float TPI = 2 * PI;
 const float P2 = PI / 2;
@@ -53,14 +71,66 @@ Color *wall3;
 Texture2D wall1tex;
 Texture2D wall2tex;
 
-Color *floor1;
-Color *floor2;
-Color *floor3;
 
 Color *walltextures[3];
-Color *floortextures[3];
 Texture2D walltextures2D[3];
 
+
+void LoadPalette(const char *filename) {
+    FILE *f = fopen(filename, "r");
+    if (!f) {
+        fprintf(stderr, "[ERROR] Couldn't open palette file %s\n", filename);
+        exit(1);
+    }
+    char header[16];
+    int num;
+    fgets(header, sizeof(header), f); // JASC-PAL
+    fgets(header, sizeof(header), f); // 0100
+    fscanf(f, "%d", &num);            // 256
+    for (int i = 0; i < num; i++) {
+        int r, g, b;
+        fscanf(f, "%d %d %d", &r, &g, &b);
+        palette[i] = (Color){r, g, b, 255};
+    }
+    fclose(f);
+}
+
+int ReadVSwapHeader(FILE *f) {
+    uint16_t num_chunks;
+    fread(&num_chunks, 2, 1, f);
+    fread(&sprite_start, 2, 1, f);
+    fseek(f, 2, SEEK_CUR); // skip soundStart
+
+    fread(chunk_offsets, sizeof(uint32_t), num_chunks, f);
+    fseek(f, 2 * num_chunks, SEEK_CUR); // skip chunk sizes
+    return num_chunks;
+}
+
+unsigned char *ReadChunk(FILE *f, int offset) {
+    fseek(f, offset, SEEK_SET);
+    unsigned char *data = malloc(TEXTURE_SIZE);
+    fread(data, 1, TEXTURE_SIZE, f);
+    return data;
+}
+
+Image DecodeWallTexture(unsigned char *data) {
+    Image img;
+    img.width = TEXTURE_WIDTH;
+    img.height = TEXTURE_HEIGHT;
+    img.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
+    img.mipmaps = 1;
+    Color *pixels = malloc(sizeof(Color) * TEXTURE_SIZE);
+
+    for (int y = 0; y < TEXTURE_HEIGHT; y++) {
+        for (int x = 0; x < TEXTURE_WIDTH; x++) {
+            int idx = x * TEXTURE_WIDTH + y; // rotated in
+            unsigned char colorIndex = data[idx];
+            pixels[y * TEXTURE_WIDTH + x] = palette[colorIndex];
+        }
+    }
+    img.data = pixels;
+    return img;
+}
 float dist(float ax, float ay, float bx, float by, float ang)
 {
     return (sqrt((bx - ax) * (bx - ax) + (by - ay) * (by - ay)));
@@ -247,7 +317,7 @@ void drawGame()
                 hitdist = 1;
             }
             float lineH = (mapS * screenHeight) / hitdist;
-            float ty_step = 32 / (float)lineH;
+            float ty_step = 64 / (float)lineH;
             float ty_off = 0;
 
             if (lineH > screenHeight)
@@ -263,17 +333,17 @@ void drawGame()
             float tx;
             if (wallSide == 1)
             {
-                tx = (int)(rx / 2.0) % 32;
+                tx = (int)(rx / 2.0) % 64;
             }
             else
             {
-                tx = (int)(ry / 2.0) % 32;
+                tx = (int)(ry / 2.0) % 64;
             }
 
             for (pxy = 0; pxy < lineH; pxy++)
             {
                 // printf("walltex: %d   ",walltex);
-                Color c = walltextures[walltex - 1][((int)(ty) * 32) + (int)tx];
+                Color c = walltextures[walltex - 1][((int)(ty) * 64) + (int)tx];
                 // shading
                 if (wallSide == 1)
                 {
@@ -284,33 +354,6 @@ void drawGame()
 
                 DrawRectangle(r * 9, pxy + lineO, 9, 9, c);
                 ty += ty_step;
-            }
-
-            // draw floors
-            int floorStart = lineO + lineH;
-            float camY = (screenHeight / 2.0f) + boba;
-
-            for (int y = floorStart; y < screenHeight; y++)
-            {
-                float perspective = camY / (y - camY);
-                float fx = px + cos(ra) * perspective * 64;
-                float fy = py + sin(ra) * perspective * 64;
-
-                int tx = ((int)fx) % 64;
-                int ty = ((int)fy) % 64;
-
-                if (tx < 0)
-                {
-                    tx += 64;
-                }
-
-                if (ty < 0)
-                {
-                    ty += 64;
-                }
-
-                Color fc = floortextures[0][(ty / 2) * 32 + (tx / 2)];
-                DrawRectangle(r * 9, y, 9, 9, fc);
             }
 
             // DrawLineEx((Vector2){(r * 8.6), lineO}, (Vector2){(r * 8.6), lineH + lineO}, 8.6f, wallCol);
@@ -347,19 +390,23 @@ void init()
 
     printf("loading textures...");
 
-    Image img = LoadImage("floor.png");
-    floor1 = LoadImageColors(img);
-    UnloadImage(img);
+    LoadPalette(PAL_FILE);
+    FILE *f = fopen(VSWAP_FILE, "rb");
+    int num_chunks = ReadVSwapHeader(f);
 
-    img = LoadImage("wall.png");
-    wall2 = LoadImageColors(img);
+    int current = 17;
+    unsigned char *data = ReadChunk(f, chunk_offsets[current]);
+    Image img = DecodeWallTexture(data);
+    wall1tex = LoadTextureFromImage(img);
+    UnloadImage(img);
+    wall1=LoadImageColors(img);
+    
+    current = 5;
+    data = ReadChunk(f, chunk_offsets[current]);
+    img = DecodeWallTexture(data);
     wall2tex = LoadTextureFromImage(img);
     UnloadImage(img);
-
-    img = LoadImage("wall2.png");
-    wall1tex = LoadTextureFromImage(img);
-    wall1 = LoadImageColors(img);
-    UnloadImage(img);
+    wall2=LoadImageColors(img);
 
     img = LoadImage("shotgun_sheet.png");
     Color green = (Color){255, 0, 255, 255};
@@ -373,10 +420,10 @@ void init()
     walltextures[0] = wall1;
     walltextures[1] = wall2;
 
-    floortextures[0] = floor1;
 
     printf("starting game...");
 }
+
 
 void buttons()
 {
