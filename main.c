@@ -47,8 +47,26 @@ const float TPI = 2 * PI;
 const float P2 = PI / 2;
 const float P3 = 3 * PI / 2;
 
-int screenWidth = 320;
-int screenHeight = 200;
+int screenWidth = 640;
+int screenHeight = 480;
+
+//insane performance
+//int renderWidth = 120;
+//int renderHeight =  80;
+
+//gameboy
+// int renderWidth = 240;
+// int renderHeight =  160;
+
+//native
+int renderWidth = 320;
+int renderHeight =  200;
+
+//doubled
+//int renderWidth = 640;
+//int renderHeight =  400;
+
+RenderTexture2D renderTex;
 
 float px, py, pa, pdx, pdy;
 float speed;
@@ -222,6 +240,81 @@ int* load_map_plane0(const char* maphead_path, const char* gamemaps_path, int ma
 }
 
 
+int* load_map_plane1(const char* maphead_path, const char* gamemaps_path, int map_number, float* opx, float *opy, float *opa) {
+    FILE *fhead = fopen(maphead_path, "rb");
+    FILE *fmap = fopen(gamemaps_path, "rb");
+    if (!fhead || !fmap) {
+        printf("Failed to open files.\n");
+        return NULL;
+    }
+
+    // Load MAPHEAD
+    MapHead maphead;
+    fread(&maphead.RLEWtag, sizeof(word), 1, fhead);
+    fread(maphead.headerOffsets, sizeof(long), NUMMAPS, fhead);
+
+    long offset = maphead.headerOffsets[map_number];
+    if (offset <= 0) {
+        printf("Invalid map offset.\n");
+        return NULL;
+    }
+
+    // Read map header
+    fseek(fmap, offset, SEEK_SET);
+    MapHeader header;
+    fread(&header, sizeof(MapHeader), 1, fmap);
+
+    long planeOffset = header.planestart[1];
+    word planeLength = header.planelength[1];
+
+    fseek(fmap, planeOffset, SEEK_SET);
+
+    byte *compressed = malloc(planeLength);
+    fread(compressed, 1, planeLength, fmap);
+
+    word expandedLength = *(word*)compressed;
+    word *carmack_source = (word*)(compressed + 2);
+    word *carmack_output = malloc(expandedLength);
+
+    CAL_CarmackExpand(carmack_source, carmack_output, expandedLength);
+
+    word *rlew_source = carmack_output + 1;
+    word *rlew_output = malloc(PLANESIZE * sizeof(word));
+
+    CA_RLEWexpand(rlew_source, rlew_output, PLANESIZE * 2, maphead.RLEWtag);
+
+    //find starting pos/angle
+    int face;
+    int startP=0;
+    int *final_map = malloc(PLANESIZE * sizeof(int));
+    for (int i = 0; i < PLANESIZE; i++) {
+        if (rlew_output[i] >=19 && rlew_output[i]<=22){
+            face = rlew_output[i];
+            break;
+        }else{
+            startP++;
+            continue;
+        }
+    }
+
+    int startX = startP % 64;
+    int startY = startP / 64;
+
+    free(compressed);
+    free(carmack_output);
+    free(rlew_output);
+    fclose(fhead);
+    fclose(fmap);
+    printf("\n\nstart found x%f y%f a%d\n\n",(float)startX,(float)startY,face);
+    *opx=(float)startX*64;
+    *opy=(float)startY*64;
+    *opa=(float)(face - 19) * (PI / 2);
+
+    //adjust for this engines quirks
+    *opa=*opa-(PI/2);
+    return 0;
+}
+
 void LoadPalette(const char *filename) {
     FILE *f = fopen(filename, "r");
     if (!f) {
@@ -284,10 +377,10 @@ float dist(float ax, float ay, float bx, float by, float ang)
 void drawMap2D()
 {
     int x, y;
-    float newmaps = screenWidth / mapX;
+    float newmaps = renderWidth / mapX;
     float scalefactor = newmaps / mapS;
 
-    float newmapsy = screenHeight / mapY;
+    float newmapsy = renderHeight / mapY;
     float scalefactory = newmapsy / mapS;
     int mapitem;
     Color sqColor;
@@ -304,19 +397,19 @@ void drawMap2D()
             float tileY = y * newmapsy;
 
             // Draw tile background
-            DrawRectangle(tileX, tileY, newmaps, newmapsy, BLACK);
+            //DrawRectangle(tileX, tileY, newmaps, newmapsy, BLACK);
             if (mapitem >= 1)
             {
-                DrawRectangle(tileX + 1, tileY + 1, newmaps - 1, newmapsy - 1, BLUE);
+                DrawRectangle(tileX, tileY, newmaps, newmapsy, BLUE);
             }
             else
             {
-                DrawRectangle(tileX + 1, tileY + 1, newmaps - 1, newmapsy - 1, LIGHTGRAY);
+                DrawRectangle(tileX, tileY, newmaps, newmapsy, LIGHTGRAY);
             }
 
             // Draw tile number
-            snprintf(numStr, sizeof(numStr), "%d", mapitem);
-            DrawText(numStr, tileX + 3, tileY + 3, 10, RAYWHITE);
+            //snprintf(numStr, sizeof(numStr), "%d", mapitem);
+            //DrawText(numStr, tileX + 3, tileY + 3, 10, RAYWHITE);
         }
     }
 
@@ -336,7 +429,7 @@ void drawGame()
     int walltexv = -1;
     int walltexh = -1;
 
-    int num_rays=screenWidth;
+    int num_rays=renderWidth;
 
     ra = pa - DEG2RAD * (FOV / 2);  // Start left edge of FOV
 
@@ -480,16 +573,16 @@ void drawGame()
             {
                 hitdist = 1;
             }
-            float lineH = (mapS * screenHeight) / hitdist;
+            float lineH = (mapS * renderHeight) / hitdist;
             float ty_step = 64 / (float)lineH;
             float ty_off = 0;
 
-            if (lineH > screenHeight)
+            if (lineH > renderHeight)
             {
-                ty_off = (lineH - screenHeight) / 2.0;
-                lineH = screenHeight;
+                ty_off = (lineH - renderHeight) / 2.0;
+                lineH = renderHeight;
             }
-            float lineO = (screenHeight / 2) - lineH / 2;
+            float lineO = (renderHeight / 2) - lineH / 2;
             lineO = lineO;
 
             int pxy;
@@ -539,11 +632,11 @@ void init()
 {
     printf("initializing...");
     mode = true;
-    px = 30*64;
-    py = 57*64;
+    px = 0;
+    py = 0;
     pa = 0;
     speed = 0;
-    vdep = 16;
+    vdep = 300;
     shootFrame = 0;
     maxspeed = 300;   // max running speed
     turnspeed = 3.0f; // turning
@@ -559,14 +652,18 @@ void init()
         Image img = DecodeWallTexture(data);
         walltextures[texnum]=LoadImageColors(img);
         UnloadImage(img);
-        printf("tex %d loaded",texnum);
     }
 
-    printf("loading map data for level 0");
-    map = load_map_plane0("MAPHEAD.WL6", "GAMEMAPS.WL6", 0);  // map 0, plane 0
+    
+    //what level
+    int clevel=0;
+    printf("loading map data for level %d",clevel+1);
+    map = load_map_plane0("MAPHEAD.WL6", "GAMEMAPS.WL6", clevel);
     if (!map) {
         fprintf(stderr, "Failed to load map from files.\n");
     }
+
+    load_map_plane1("MAPHEAD.WL6", "GAMEMAPS.WL6", clevel,&px,&py,&pa);
 
 
 
@@ -646,24 +743,27 @@ int main(void)
 {
 
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
-    
     InitWindow(screenWidth, screenHeight, "Raytest");
     init();
+    renderTex = LoadRenderTexture(renderWidth, renderHeight);
+    
+ 
 
     SetTargetFPS(60);
 
     while (!WindowShouldClose())
     {
+        
+
         dt = GetFrameTime();
-        screenWidth=GetScreenWidth(); 
-        screenHeight=GetScreenHeight(); 
 
         buttons();
         playerMovement();
 
-        BeginDrawing();
+        
+        BeginTextureMode(renderTex);
         ClearBackground(DARKGRAY);
-        DrawRectangle(0, screenHeight / 2, screenWidth, screenHeight / 2, GRAY);
+        DrawRectangle(0, renderHeight / 2, renderWidth, renderHeight / 2, GRAY);
         drawGame();
 
         if (shooting)
@@ -688,8 +788,29 @@ int main(void)
         char floatString[20];
         snprintf(myString, 50, "Raytest x%f y%f  ANG: %f", px,py, pa);
         DrawText(myString, 10, 10, 20, BLACK);
+        EndTextureMode();
+
+
+        BeginDrawing();
+        ClearBackground(BLACK);
+
+        screenWidth=GetScreenWidth(); 
+        screenHeight=GetScreenHeight(); 
+
+        // scale to full screen
+        DrawTexturePro(
+            renderTex.texture,
+            (Rectangle){0, 0, renderWidth, -renderHeight}, // flip Y axis for RenderTexture
+            (Rectangle){0, 0, screenWidth, screenHeight}, // stretch to window size
+            (Vector2){0, 0},
+            0.0f,
+            WHITE
+        );
+
+        // optionally draw HUD here if you want it full-res (e.g. overlays)
 
         EndDrawing();
+
     }
 
     CloseWindow();
