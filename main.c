@@ -9,9 +9,30 @@
 #define TEXTURE_HEIGHT 64
 #define TEXTURE_SIZE (TEXTURE_WIDTH * TEXTURE_HEIGHT)
 #define SCREEN_SCALE 8
-#define SCREEN_WIDTH (TEXTURE_WIDTH * SCREEN_SCALE)
-#define SCREEN_HEIGHT (TEXTURE_HEIGHT * SCREEN_SCALE)
 #define MAX_CHUNKS 2048
+#define FOV 60.0f
+#define NEARTAG 0xA7
+#define FARTAG  0xA8
+#define NUMMAPS 60
+#define MAPPLANES 3
+#define PLANESIZE (64*64)
+#define AREATILE 90
+
+typedef unsigned char byte;
+typedef unsigned short word;
+
+typedef struct {
+    word RLEWtag;
+    long headerOffsets[NUMMAPS];
+    // tileinfo comes after this but we don't need it
+} MapHead;
+
+typedef struct {
+    long planestart[3];
+    word planelength[3];
+    word width, height;
+    char name[16];
+} MapHeader;
 
 
 const char *VSWAP_FILE = "VSWAP.WL6";
@@ -19,23 +40,20 @@ const char *PAL_FILE = "wolf.pal";
 
 unsigned int chunk_offsets[MAX_CHUNKS];
 int sprite_start = 0;
+int TEX_OFFSET;
 Color palette[256];
 
 const float TPI = 2 * PI;
 const float P2 = PI / 2;
 const float P3 = 3 * PI / 2;
 
-const int screenWidth = 512;
-const int screenHeight = 512;
+int screenWidth = 320;
+int screenHeight = 200;
 
 float px, py, pa, pdx, pdy;
 float speed;
-float movespeed;
 float maxspeed;
 float turnspeed;
-float friction;
-float bob;
-float boba;
 float dt;
 bool mode;
 int vdep;
@@ -45,24 +63,8 @@ float shootFrame;
 bool shooting;
 
 int mapS = 64;
-int mapX = 16, mapY = 16;
-int map[] = {
-    1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1,
-    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 1,
-    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1,
-    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1,
-    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1,
-    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1,
-    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 1,
-    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 1,
-    2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 2,
-    1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
-    1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
-    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
-    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
-    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
-    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
-    1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1};
+int mapX = 64, mapY = 64;
+int *map;
 
 Color *wall1;
 Color *wall2;
@@ -72,8 +74,152 @@ Texture2D wall1tex;
 Texture2D wall2tex;
 
 
-Color *walltextures[3];
-Texture2D walltextures2D[3];
+Color *walltextures[340];
+
+void CAL_CarmackExpand (unsigned short *source, unsigned short *dest, unsigned length)
+{
+	unsigned	ch,chhigh,count,offset;
+	unsigned short	*copyptr, *inptr, *outptr;
+
+	length/=2;
+
+	inptr = source;
+	outptr = dest;
+
+	while (length)
+	{
+		ch = *inptr++;
+		chhigh = ch>>8;
+		if (chhigh == NEARTAG)
+		{
+			count = ch&0xff;
+			if (!count)
+			{				// have to insert a word containing the tag byte
+				    unsigned char *byteptr = (unsigned char *)inptr;
+    ch |= *byteptr++;
+    inptr = (word *)byteptr;
+				*outptr++ = ch;
+				length--;
+			}
+			else
+			{
+				    unsigned char *byteptr = (unsigned char *)inptr;
+    offset = *byteptr++;
+    inptr = (word *)byteptr;
+				copyptr = outptr - offset;
+				length -= count;
+				while (count--)
+					*outptr++ = *copyptr++;
+			}
+		}
+		else if (chhigh == FARTAG)
+		{
+			count = ch&0xff;
+			if (!count)
+			{				// have to insert a word containing the tag byte
+				    unsigned char *byteptr = (unsigned char *)inptr;
+    ch |= *byteptr++;
+    inptr = (word *)byteptr;
+				*outptr++ = ch;
+				length --;
+			}
+			else
+			{
+				offset = *inptr++;
+				copyptr = dest + offset;
+				length -= count;
+				while (count--)
+					*outptr++ = *copyptr++;
+			}
+		}
+		else
+		{
+			*outptr++ = ch;
+			length --;
+		}
+	}
+}
+
+void CA_RLEWexpand(word *source, word *dest, long length, word rlewtag) {
+    word value, count;
+    word *end = dest + (length / 2);
+
+    while (dest < end) {
+        value = *source++;
+        if (value != rlewtag) {
+            *dest++ = value;
+        } else {
+            count = *source++;
+            value = *source++;
+            for (int i = 0; i < count; i++) {
+                *dest++ = value;
+            }
+        }
+    }
+}
+
+int* load_map_plane0(const char* maphead_path, const char* gamemaps_path, int map_number) {
+    FILE *fhead = fopen(maphead_path, "rb");
+    FILE *fmap = fopen(gamemaps_path, "rb");
+    if (!fhead || !fmap) {
+        printf("Failed to open files.\n");
+        return NULL;
+    }
+
+    // Load MAPHEAD
+    MapHead maphead;
+    fread(&maphead.RLEWtag, sizeof(word), 1, fhead);
+    fread(maphead.headerOffsets, sizeof(long), NUMMAPS, fhead);
+
+    long offset = maphead.headerOffsets[map_number];
+    if (offset <= 0) {
+        printf("Invalid map offset.\n");
+        return NULL;
+    }
+
+    // Read map header
+    fseek(fmap, offset, SEEK_SET);
+    MapHeader header;
+    fread(&header, sizeof(MapHeader), 1, fmap);
+
+    long planeOffset = header.planestart[0];
+    word planeLength = header.planelength[0];
+
+    fseek(fmap, planeOffset, SEEK_SET);
+
+    byte *compressed = malloc(planeLength);
+    fread(compressed, 1, planeLength, fmap);
+
+    word expandedLength = *(word*)compressed;
+    word *carmack_source = (word*)(compressed + 2);
+    word *carmack_output = malloc(expandedLength);
+
+    CAL_CarmackExpand(carmack_source, carmack_output, expandedLength);
+
+    word *rlew_source = carmack_output + 1;
+    word *rlew_output = malloc(PLANESIZE * sizeof(word));
+
+    CA_RLEWexpand(rlew_source, rlew_output, PLANESIZE * 2, maphead.RLEWtag);
+
+    // Copy to int[]
+    int *final_map = malloc(PLANESIZE * sizeof(int));
+    for (int i = 0; i < PLANESIZE; i++) {
+        if (rlew_output[i] < AREATILE){
+            final_map[i] = rlew_output[i];
+        }else{
+            final_map[i] = 0;
+        }
+        
+    }
+
+    free(compressed);
+    free(carmack_output);
+    free(rlew_output);
+    fclose(fhead);
+    fclose(fmap);
+
+    return final_map;
+}
 
 
 void LoadPalette(const char *filename) {
@@ -140,31 +286,46 @@ void drawMap2D()
     int x, y;
     float newmaps = screenWidth / mapX;
     float scalefactor = newmaps / mapS;
+
+    float newmapsy = screenHeight / mapY;
+    float scalefactory = newmapsy / mapS;
     int mapitem;
     Color sqColor;
     Texture2D sqTex;
+
+    char numStr[4]; // enough for 3-digit tile numbers
 
     for (y = 0; y < mapY; y++)
     {
         for (x = 0; x < mapX; x++)
         {
             mapitem = map[y * mapX + x];
-            DrawRectangle(x * newmaps, y * newmaps, newmaps, newmaps, BLACK);
+            float tileX = x * newmaps;
+            float tileY = y * newmapsy;
+
+            // Draw tile background
+            DrawRectangle(tileX, tileY, newmaps, newmapsy, BLACK);
             if (mapitem >= 1)
             {
-                sqTex = walltextures2D[mapitem - 1];
-                DrawTextureEx(sqTex, (Vector2){x * newmaps, y * newmaps}, 0.0f, 1, WHITE);
+                DrawRectangle(tileX + 1, tileY + 1, newmaps - 1, newmapsy - 1, BLUE);
             }
             else
             {
-                DrawRectangle((x * newmaps) + 1, (y * newmaps) + 1, newmaps - 1, newmaps - 1, LIGHTGRAY);
+                DrawRectangle(tileX + 1, tileY + 1, newmaps - 1, newmapsy - 1, LIGHTGRAY);
             }
 
-            DrawCircle(px * scalefactor, py * scalefactor, 5, RED);
-            DrawLineEx((Vector2){px * scalefactor, py * scalefactor}, (Vector2){px * scalefactor + (pdx * 10), py * scalefactor + (pdy * 10)}, 3.0f, MAROON);
+            // Draw tile number
+            snprintf(numStr, sizeof(numStr), "%d", mapitem);
+            DrawText(numStr, tileX + 3, tileY + 3, 10, RAYWHITE);
         }
     }
+
+    DrawCircle(px * scalefactor, py * scalefactory, 5, RED);
+    DrawLineEx((Vector2){px * scalefactor, py * scalefactory}, 
+               (Vector2){px * scalefactor + (pdx * 10), py * scalefactory + (pdy * 10)}, 
+               3.0f, MAROON);
 }
+
 
 void drawGame()
 {
@@ -175,7 +336,10 @@ void drawGame()
     int walltexv = -1;
     int walltexh = -1;
 
-    ra = pa - DEG2RAD * 30;
+    int num_rays=screenWidth;
+
+    ra = pa - DEG2RAD * (FOV / 2);  // Start left edge of FOV
+
     if (ra < 0)
     {
         ra += TPI;
@@ -188,7 +352,7 @@ void drawGame()
     {
         drawMap2D();
     }
-    for (r = 0; r < 60; r++)
+    for (int r = 0; r < num_rays; r++)
     {
 
         // check hor lines
@@ -199,7 +363,7 @@ void drawGame()
         if (ra > PI)
         {
             // looking up
-            ry = (((int)py >> 6) << 6) - 0.0001;
+            ry = floor(py / 64.0) * 64.0 - 0.01;
             rx = (py - ry) * aTan + px;
             yo = -64;
             xo = -yo * aTan;
@@ -207,7 +371,7 @@ void drawGame()
         if (ra < PI)
         {
             // looking down
-            ry = (((int)py >> 6) << 6) + 64;
+            ry = floor(py / 64.0) * 64.0 + 64;
             rx = (py - ry) * aTan + px;
             yo = 64;
             xo = -yo * aTan;
@@ -221,10 +385,11 @@ void drawGame()
         }
         while (dof < vdep)
         {
-            mx = (int)(rx) >> 6;
-            my = (int)(ry) >> 6;
+            mx = (int)floor(rx / 64.0);
+            my = (int)floor(ry / 64.0);
+            
             mp = my * mapX + mx;
-            if (mp > 0 && mp < mapX * mapY && map[mp] >= 1 && map[mp] <= 3)
+            if (mp > 0 && mp < mapX * mapY && map[mp] >= 1 && map[mp] <= AREATILE)
             {
                 // hit wall
                 hx = rx;
@@ -247,14 +412,15 @@ void drawGame()
         float nTan = -tan(ra);
         if (ra > P2 && ra < P3)
         { // looking left
-            rx = (((int)px >> 6) << 6) - 0.0001;
+            
+            rx = floor(px / 64.0) * 64.0 - 0.01;
             ry = (px - rx) * nTan + py;
             xo = -64;
             yo = -xo * nTan;
         }
         if (ra < P2 || ra > P3)
         { // looking right
-            rx = (((int)px >> 6) << 6) + 64;
+            rx = floor(px / 64.0) * 64.0 + 64;
             ry = (px - rx) * nTan + py;
             xo = 64;
             yo = -xo * nTan;
@@ -267,11 +433,12 @@ void drawGame()
         }
         while (dof < vdep)
         {
-            mx = (int)(rx) >> 6;
-            my = (int)(ry) >> 6;
+            mx = (int)floor(rx / 64.0);
+            my = (int)floor(ry / 64.0);
+
             mp = my * mapX + mx;
 
-            if (mp > 0 && mp < mapX * mapY && map[mp] >= 1 && map[mp] <= 3)
+            if (mp > 0 && mp < mapX * mapY && map[mp] >= 1 && map[mp] <= AREATILE)
             {
                 vx = rx;
                 vy = ry;
@@ -305,13 +472,10 @@ void drawGame()
             wallSide = 1;
             walltex = walltexh;
         }
-        // if (mode == 0)
-        // {
 
-        //     DrawLineEx((Vector2){px, py}, (Vector2){rx, ry}, 1.0f, RED);
-        // }
-        if (mode && walltex >= 0 && walltex <= 3)
+        if (mode)
         {
+            hitdist *= cos(pa - ra); // Remove fisheye effect
             if (hitdist <= 0)
             {
                 hitdist = 1;
@@ -326,24 +490,24 @@ void drawGame()
                 lineH = screenHeight;
             }
             float lineO = (screenHeight / 2) - lineH / 2;
-            lineO = lineO + boba;
+            lineO = lineO;
 
             int pxy;
             float ty = ty_off * ty_step;
             float tx;
             if (wallSide == 1)
             {
-                tx = (int)(rx / 2.0) % 64;
+                tx = (int)(rx) % 64;
             }
             else
             {
-                tx = (int)(ry / 2.0) % 64;
+                tx = (int)(ry) % 64;
             }
 
             for (pxy = 0; pxy < lineH; pxy++)
             {
                 // printf("walltex: %d   ",walltex);
-                Color c = walltextures[walltex - 1][((int)(ty) * 64) + (int)tx];
+                Color c = walltextures[(walltex-1)*2][((int)(ty) * 64) + (int)tx];
                 // shading
                 if (wallSide == 1)
                 {
@@ -352,14 +516,14 @@ void drawGame()
                     c.b = c.b * 0.5;
                 }
 
-                DrawRectangle(r * 9, pxy + lineO, 9, 9, c);
+                DrawRectangle(r * 1, pxy + lineO, 1, 1, c);
                 ty += ty_step;
             }
 
             // DrawLineEx((Vector2){(r * 8.6), lineO}, (Vector2){(r * 8.6), lineH + lineO}, 8.6f, wallCol);
         }
 
-        ra += DEG2RAD;
+        ra += DEG2RAD * (FOV / num_rays);
         if (ra < 0)
         {
             ra += TPI;
@@ -375,18 +539,14 @@ void init()
 {
     printf("initializing...");
     mode = true;
-    px = 200;
-    py = 300;
+    px = 30*64;
+    py = 57*64;
     pa = 0;
     speed = 0;
     vdep = 16;
-    bob = 0.00f;
     shootFrame = 0;
-
-    movespeed = 20;   // acceleration
-    maxspeed = 145;   // max running speed
-    turnspeed = 5.5f; // turning
-    friction = 90;    // decel
+    maxspeed = 300;   // max running speed
+    turnspeed = 3.0f; // turning
 
     printf("loading textures...");
 
@@ -394,34 +554,25 @@ void init()
     FILE *f = fopen(VSWAP_FILE, "rb");
     int num_chunks = ReadVSwapHeader(f);
 
-    int current = 17;
-    unsigned char *data = ReadChunk(f, chunk_offsets[current]);
-    Image img = DecodeWallTexture(data);
-    wall1tex = LoadTextureFromImage(img);
-    UnloadImage(img);
-    wall1=LoadImageColors(img);
-    
-    current = 5;
-    data = ReadChunk(f, chunk_offsets[current]);
-    img = DecodeWallTexture(data);
-    wall2tex = LoadTextureFromImage(img);
-    UnloadImage(img);
-    wall2=LoadImageColors(img);
+    for(int texnum=0;texnum<100;texnum++){
+        unsigned char *data = ReadChunk(f, chunk_offsets[texnum]);
+        Image img = DecodeWallTexture(data);
+        walltextures[texnum]=LoadImageColors(img);
+        UnloadImage(img);
+        printf("tex %d loaded",texnum);
+    }
 
-    img = LoadImage("shotgun_sheet.png");
-    Color green = (Color){255, 0, 255, 255};
-    Color transparent = (Color){0, 0, 0, 0};
-    ImageColorReplace(&img, green, transparent);
-    gun_tex = LoadTextureFromImage(img);
-    UnloadImage(img);
+    printf("loading map data for level 0");
+    map = load_map_plane0("MAPHEAD.WL6", "GAMEMAPS.WL6", 0);  // map 0, plane 0
+    if (!map) {
+        fprintf(stderr, "Failed to load map from files.\n");
+    }
 
-    walltextures2D[0] = wall1tex;
-    walltextures2D[1] = wall2tex;
-    walltextures[0] = wall1;
-    walltextures[1] = wall2;
 
 
     printf("starting game...");
+
+
 }
 
 
@@ -430,99 +581,72 @@ void buttons()
     if (IsKeyDown(KEY_A))
     {
         pa -= turnspeed * dt;
-        if (pa < 0)
-            pa += TPI;
+        if (pa < 0) pa += TPI;
     }
     if (IsKeyDown(KEY_D))
     {
         pa += turnspeed * dt;
-        if (pa > TPI)
-            pa -= TPI;
+        if (pa > TPI) pa -= TPI;
     }
 
     pdx = cos(pa);
     pdy = sin(pa);
 
-    bool moving = false;
+    speed = 0;
+
     if (IsKeyDown(KEY_W))
     {
-        speed += movespeed * dt * 40; // accelerate forward
-        moving = true;
-    }
-    if (IsKeyDown(KEY_S))
-    {
-        speed -= movespeed * dt * 40; // accelerate backward
-        moving = true;
-    }
-
-    if (!moving)
-    {
-        if (speed > 0)
-        {
-            speed -= friction * dt;
-            if (speed < 0)
-            {
-                speed = 0;
-            }
-        }
-        else if (speed < 0)
-        {
-            speed += friction * dt;
-            if (speed > 0)
-            {
-                speed = 0;
-            }
-        }
-    }
-
-    if (speed > maxspeed)
         speed = maxspeed;
-    if (speed < -maxspeed)
+    }
+    else if (IsKeyDown(KEY_S))
+    {
         speed = -maxspeed;
+    }
 
     if (IsKeyPressed(KEY_TAB))
     {
-
         mode = !mode;
     }
 
     if (IsKeyPressed(KEY_SPACE) && !shooting)
     {
         shooting = true;
+        TEX_OFFSET+=1;
+        printf("%d",TEX_OFFSET);
     }
 }
 
 void playerMovement()
 {
+    float radius = 12.0f;
+    float next_px = px + pdx * speed * dt;
+    float next_py = py + pdy * speed * dt;
 
-    float opx = px;
-    float opy = py;
-
-    px += pdx * speed * dt;
-    py += pdy * speed * dt;
-
-    int mx = (int)(px) >> 6;
-    int my = (int)(py) >> 6;
-    int mp = my * mapX + mx;
-    if (mp > 0 && mp < mapX * mapY && map[mp] >= 1)
+    // Check X movement with buffer
+    int mx1 = (int)(next_px + radius) / 64;
+    int mx2 = (int)(next_px - radius) / 64;
+    int my = (int)(py) / 64;
+    if (map[my * mapX + mx1] < 1 && map[my * mapX + mx2] < 1)
     {
-        // collision
-        px = opx;
-        py = opy;
-
-        // bump
-        px -= pdx * speed * dt;
-        py -= pdy * speed * dt;
-
-        // stop
-        speed = 0;
+        px = next_px;
     }
+
+    // Check Y movement with buffer
+    int my1 = (int)(next_py + radius) / 64;
+    int my2 = (int)(next_py - radius) / 64;
+    int mx = (int)(px) / 64;
+    if (map[my1 * mapX + mx] < 1 && map[my2 * mapX + mx] < 1)
+    {
+        py = next_py;
+    }
+
 }
 
 int main(void)
 {
 
-    // SetConfigFlags(FLAG_WINDOW_RESIZABLE);
+    SetConfigFlags(FLAG_WINDOW_RESIZABLE);
+    
     InitWindow(screenWidth, screenHeight, "Raytest");
     init();
 
@@ -531,34 +655,16 @@ int main(void)
     while (!WindowShouldClose())
     {
         dt = GetFrameTime();
+        screenWidth=GetScreenWidth(); 
+        screenHeight=GetScreenHeight(); 
 
         buttons();
         playerMovement();
 
         BeginDrawing();
         ClearBackground(DARKGRAY);
-        DrawRectangle(0, 250, 512, 512, GRAY);
+        DrawRectangle(0, screenHeight / 2, screenWidth, screenHeight / 2, GRAY);
         drawGame();
-
-        if (bob < 40)
-        {
-            bob += speed * dt;
-        }
-        else
-        {
-
-            bob = 0;
-        }
-        if (speed == 0 && bob > 0)
-        {
-            bob -= 10 * dt;
-        }
-
-        float n = sin(bob / 40.0f * 2 * PI);
-        float out = 5.5f + 4.5f * n;
-        boba = out;
-        // bobbing off for now
-        //boba = 0;
 
         if (shooting)
         {
@@ -570,17 +676,17 @@ int main(void)
             }
         }
 
-        if (mode)
-        {
+        //if (mode)
+        //{
 
             // DrawTextureRec(gun_tex, (Rectangle){0, 0, 64, 64}, (Vector2){drawX, drawY}, WHITE);
-            DrawTexturePro(gun_tex, (Rectangle){(int)shootFrame * 64, 0, 64, 64}, (Rectangle){130, 300, 256, 256}, (Vector2){0, 0}, 0, WHITE);
+            //DrawTexturePro(gun_tex, (Rectangle){(int)shootFrame * 64, 0, 64, 64}, (Rectangle){130, 300, 256, 256}, (Vector2){0, 0}, 0, WHITE);
             // DrawTextureEx(gun_tex, (Vector2){drawX, drawY}, 0.0f, scale, WHITE);
-        }
+        //}
 
         char myString[50];
         char floatString[20];
-        snprintf(myString, 50, "Raytest SPD: %f   ANG: %f", speed, pa);
+        snprintf(myString, 50, "Raytest x%f y%f  ANG: %f", px,py, pa);
         DrawText(myString, 10, 10, 20, BLACK);
 
         EndDrawing();
