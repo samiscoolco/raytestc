@@ -12,10 +12,10 @@
 #define MAX_CHUNKS 2048
 #define FOV 60.0f
 #define NEARTAG 0xA7
-#define FARTAG  0xA8
+#define FARTAG 0xA8
 #define NUMMAPS 60
 #define MAPPLANES 3
-#define PLANESIZE (64*64)
+#define PLANESIZE (64 * 64)
 #define AREATILE 90
 #define SPRITE_WIDTH 64
 #define SPRITE_HEIGHT 64
@@ -24,27 +24,28 @@
 typedef unsigned char byte;
 typedef unsigned short word;
 
-typedef struct {
+typedef struct
+{
     word RLEWtag;
     long headerOffsets[NUMMAPS];
     // tileinfo comes after this but we don't need it
 } MapHead;
 
-typedef struct {
+typedef struct
+{
     long planestart[3];
     word planelength[3];
     word width, height;
     char name[16];
 } MapHeader;
 
-
 const char *VSWAP_FILE = "VSWAP.WL6";
 const char *PAL_FILE = "wolf.pal";
 
-Texture2D testSpriteTex;
-
 unsigned int chunk_offsets[MAX_CHUNKS];
 int sprite_start = 0;
+int nextSprite = 0;
+
 
 Color palette[256];
 
@@ -55,21 +56,28 @@ const float P3 = 3 * PI / 2;
 int screenWidth = 640;
 int screenHeight = 480;
 
-//insane performance
-//int renderWidth = 120;
-//int renderHeight =  80;
+// insane performance
+// int renderWidth = 120;
+// int renderHeight =  80;
 
-//gameboy
-// int renderWidth = 240;
-// int renderHeight =  160;
+// gameboy
+//  int renderWidth = 240;
+//  int renderHeight =  160;
 
-//native
+// native
 int renderWidth = 320;
-int renderHeight =  200;
+int renderHeight = 200;
 
-//doubled
-//int renderWidth = 640;
-//int renderHeight =  400;
+// doubled
+// int renderWidth = 640;
+// int renderHeight =  400;
+
+// ULTRA
+// int renderWidth = 1280;
+// int renderHeight =  800;
+
+//foolish
+float wallDepth[3000];
 
 RenderTexture2D renderTex;
 
@@ -89,28 +97,26 @@ int mapS = 64;
 int mapX = 64, mapY = 64;
 int *map;
 
-Color *wall1;
-Color *wall2;
-Color *wall3;
-
-Texture2D wall1tex;
-Texture2D wall2tex;
-
-
+Texture2D spTex[340];
 Color *walltextures[340];
 
-typedef struct {
- int type;           //static, key, enemy
- int state;          //on off
- int map;            //texture to show
- float x,y,z;        //position
-}sprite; 
+typedef struct
+{
+    int type;      // static, key, enemy
+    int state;     // on off
+    int map;       // texture to show
+    float x, y, z; // position
+    int dist;
+} sprite;
 
-sprite sp[4];
+sprite sp[255];
+sprite spStatic[255];
 
-Image stxloadVSWAP_Sprite(const char *filename, int desiredSpr) {
+Image stxloadVSWAP_Sprite(const char *filename, int desiredSpr)
+{
     FILE *f = fopen(filename, "rb");
-    if (!f) {
+    if (!f)
+    {
         fprintf(stderr, "Error opening %s\n", filename);
         exit(1);
     }
@@ -137,29 +143,37 @@ Image stxloadVSWAP_Sprite(const char *filename, int desiredSpr) {
 
     uint16_t *cmd_offsets = (uint16_t *)(spr + 4);
     uint8_t tmp[SPRITE_DIM * SPRITE_DIM] = {0};
+    bool written[SPRITE_DIM * SPRITE_DIM] = {false};
 
-    for (int col = 0; col < colcount; col++) {
+    for (int col = 0; col < colcount; col++)
+    {
         int x = leftpix + col;
         int ptr = cmd_offsets[col];
 
-        while (1) {
-            if (ptr + 6 > sizes[sprNum]) break;
+        while (1)
+        {
+            if (ptr + 6 > sizes[sprNum])
+                break;
 
-            int16_t endY2    = spr[ptr]     | (spr[ptr + 1] << 8);
-            int16_t dataOff  = spr[ptr + 2] | (spr[ptr + 3] << 8);
-            int16_t startY2  = spr[ptr + 4] | (spr[ptr + 5] << 8);
+            int16_t endY2 = spr[ptr] | (spr[ptr + 1] << 8);
+            int16_t dataOff = spr[ptr + 2] | (spr[ptr + 3] << 8);
+            int16_t startY2 = spr[ptr + 4] | (spr[ptr + 5] << 8);
 
-            if (endY2 == 0) break;
+            if (endY2 == 0)
+                break;
 
-            int top    = startY2 / 2;
+            int top = startY2 / 2;
             int bottom = endY2 / 2;
-
             int n = top + dataOff;
 
-
-            for (int y = top; y < bottom && n < sizes[sprNum]; y++) {
-                if (x >= 0 && x < SPRITE_DIM && y >= 0 && y < SPRITE_DIM)
-                    tmp[y * SPRITE_DIM + x] = spr[n];
+            for (int y = top; y < bottom; y++)
+            {
+                int index = y * SPRITE_DIM + x;
+                if (x >= 0 && x < SPRITE_DIM && y >= 0 && y < SPRITE_DIM && n < sizes[sprNum])
+                {
+                    tmp[index] = spr[n];
+                    written[index] = true;
+                }
                 n++;
             }
 
@@ -168,14 +182,20 @@ Image stxloadVSWAP_Sprite(const char *filename, int desiredSpr) {
     }
 
     Color *pixels = malloc(sizeof(Color) * SPRITE_DIM * SPRITE_DIM);
-    for (int y = 0; y < SPRITE_DIM; y++) {
-        for (int x = 0; x < SPRITE_DIM; x++) {
-            int idx = tmp[y * SPRITE_DIM + x];
-            if (idx > 0){
-                //printf("%d PIXEL ",idx);
-                pixels[y * SPRITE_DIM + x] = palette[idx];
-            }else{pixels[y * SPRITE_DIM + x] = (Color){0, 0, 0, 0};}
-                
+    for (int y = 0; y < SPRITE_DIM; y++)
+    {
+        for (int x = 0; x < SPRITE_DIM; x++)
+        {
+            int index = y * SPRITE_DIM + x;
+            uint8_t idx = tmp[index];
+            if (written[index])
+            {
+                pixels[index] = palette[idx]; // use full color including black
+            }
+            else
+            {
+                pixels[index] = (Color){0, 0, 0, 0}; // fully transparent
+            }
         }
     }
 
@@ -188,133 +208,172 @@ Image stxloadVSWAP_Sprite(const char *filename, int desiredSpr) {
         .width = SPRITE_DIM,
         .height = SPRITE_DIM,
         .mipmaps = 1,
-        .format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8
-    };
+        .format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8};
     return img;
 }
 
-
 void drawSprite()
 {
-    int s=0;
+    for (int s = 0; s < nextSprite; s++)
+    {
+        float sx = sp[s].x - px;
+        float sy = sp[s].y - py;
+        float sz = sp[s].z;
 
-    float sx=sp[s].x-px; //temp float variables
-    float sy=sp[s].y-py;
-    float sz=sp[s].z;
+        float CS = cos(-pa), SN = sin(-pa);
+        float a = sy * CS + sx * SN;
+        float b = sx * CS - sy * SN;
+        sx = a;
+        sy = b;
 
-    float CS=cos(-pa), SN=sin(-pa); // correct direction
+        if (b <= 0.1f) continue; // sprite is behind player
 
-    float a=sy*CS+sx*SN; 
-    float b=sx*CS-sy*SN; 
-    sx=a; sy=b;
+        sx = (sx * renderWidth / sy) + (renderWidth / 2);
+        sy = (sz * renderHeight / sy) + (renderHeight / 2);
 
-    sx = (sx * renderWidth / sy) + (renderWidth / 2);
-    sy = (sz * renderHeight / sy) + (renderHeight / 2);
+        float scale = (32 * 80) / b;
+        if (scale < 0) scale = 0;
 
+        float sprLeft = sx - (scale * 2.5f);
+        float sprRight = sx + (scale * 2.5f);
 
-    float scale=32*80/b;   //scale sprite based on distance
-    if(scale<0){ scale=0;} 
+        // === SPRITE OCCLUSION CHECK ===
+        // Skip drawing if behind wall in center column
+        int centerColumn = (int)sx;
+        if (centerColumn >= 0 && centerColumn < renderWidth)
+        {
+            if (b > wallDepth[centerColumn]) continue; // sprite is behind wall
+        }
 
-    //DrawRectangle(sx,sy,scale,scale, BLUE);
-    //DrawTextureRec(testSpriteTex, (Rectangle){0, 0, 64, 64}, (Vector2){32, 32}, WHITE);
-    DrawTexturePro(
-    testSpriteTex,
-    (Rectangle){0, 0, 64, 64},              
-    (Rectangle){sx - (scale * 2.5), sy - (scale * 4), scale * 5, scale * 5}, 
-    (Vector2){0, 0}, 
-    0.0f,
-    WHITE
-);
-
- 
+        // Draw the sprite
+        DrawTexturePro(
+            spTex[sp[s].map],
+            (Rectangle){0, 0, 64, 64},
+            (Rectangle){sprLeft, sy - (scale * 4), scale * 5, scale * 5},
+            (Vector2){0, 0},
+            0.0f,
+            WHITE);
+    }
 }
 
-void CAL_CarmackExpand (unsigned short *source, unsigned short *dest, unsigned length)
+void sortSprites()
 {
-	unsigned	ch,chhigh,count,offset;
-	unsigned short	*copyptr, *inptr, *outptr;
+    for (int i = 0; i < nextSprite; i++)
+    {
+        float dx = sp[i].x - px;
+        float dy = sp[i].y - py;
+        sp[i].dist = dx * dx + dy * dy; // squared distance is fine
+    }
 
-	length/=2;
-
-	inptr = source;
-	outptr = dest;
-
-	while (length)
-	{
-		ch = *inptr++;
-		chhigh = ch>>8;
-		if (chhigh == NEARTAG)
-		{
-			count = ch&0xff;
-			if (!count)
-			{				// have to insert a word containing the tag byte
-				    unsigned char *byteptr = (unsigned char *)inptr;
-    ch |= *byteptr++;
-    inptr = (word *)byteptr;
-				*outptr++ = ch;
-				length--;
-			}
-			else
-			{
-				    unsigned char *byteptr = (unsigned char *)inptr;
-    offset = *byteptr++;
-    inptr = (word *)byteptr;
-				copyptr = outptr - offset;
-				length -= count;
-				while (count--)
-					*outptr++ = *copyptr++;
-			}
-		}
-		else if (chhigh == FARTAG)
-		{
-			count = ch&0xff;
-			if (!count)
-			{				// have to insert a word containing the tag byte
-				    unsigned char *byteptr = (unsigned char *)inptr;
-    ch |= *byteptr++;
-    inptr = (word *)byteptr;
-				*outptr++ = ch;
-				length --;
-			}
-			else
-			{
-				offset = *inptr++;
-				copyptr = dest + offset;
-				length -= count;
-				while (count--)
-					*outptr++ = *copyptr++;
-			}
-		}
-		else
-		{
-			*outptr++ = ch;
-			length --;
-		}
-	}
+    // Simple bubble sort (fine for small sprite counts)
+    for (int i = 0; i < nextSprite - 1; i++)
+    {
+        for (int j = i + 1; j < nextSprite; j++)
+        {
+            if (sp[i].dist < sp[j].dist)
+            {
+                sprite temp = sp[i];
+                sp[i] = sp[j];
+                sp[j] = temp;
+            }
+        }
+    }
 }
 
-void CA_RLEWexpand(word *source, word *dest, long length, word rlewtag) {
+void CAL_CarmackExpand(unsigned short *source, unsigned short *dest, unsigned length)
+{
+    unsigned ch, chhigh, count, offset;
+    unsigned short *copyptr, *inptr, *outptr;
+
+    length /= 2;
+
+    inptr = source;
+    outptr = dest;
+
+    while (length)
+    {
+        ch = *inptr++;
+        chhigh = ch >> 8;
+        if (chhigh == NEARTAG)
+        {
+            count = ch & 0xff;
+            if (!count)
+            { // have to insert a word containing the tag byte
+                unsigned char *byteptr = (unsigned char *)inptr;
+                ch |= *byteptr++;
+                inptr = (word *)byteptr;
+                *outptr++ = ch;
+                length--;
+            }
+            else
+            {
+                unsigned char *byteptr = (unsigned char *)inptr;
+                offset = *byteptr++;
+                inptr = (word *)byteptr;
+                copyptr = outptr - offset;
+                length -= count;
+                while (count--)
+                    *outptr++ = *copyptr++;
+            }
+        }
+        else if (chhigh == FARTAG)
+        {
+            count = ch & 0xff;
+            if (!count)
+            { // have to insert a word containing the tag byte
+                unsigned char *byteptr = (unsigned char *)inptr;
+                ch |= *byteptr++;
+                inptr = (word *)byteptr;
+                *outptr++ = ch;
+                length--;
+            }
+            else
+            {
+                offset = *inptr++;
+                copyptr = dest + offset;
+                length -= count;
+                while (count--)
+                    *outptr++ = *copyptr++;
+            }
+        }
+        else
+        {
+            *outptr++ = ch;
+            length--;
+        }
+    }
+}
+
+void CA_RLEWexpand(word *source, word *dest, long length, word rlewtag)
+{
     word value, count;
     word *end = dest + (length / 2);
 
-    while (dest < end) {
+    while (dest < end)
+    {
         value = *source++;
-        if (value != rlewtag) {
+        if (value != rlewtag)
+        {
             *dest++ = value;
-        } else {
+        }
+        else
+        {
             count = *source++;
             value = *source++;
-            for (int i = 0; i < count; i++) {
+            for (int i = 0; i < count; i++)
+            {
                 *dest++ = value;
             }
         }
     }
 }
 
-int* load_map_plane0(const char* maphead_path, const char* gamemaps_path, int map_number) {
+int *load_map_plane0(const char *maphead_path, const char *gamemaps_path, int map_number)
+{
     FILE *fhead = fopen(maphead_path, "rb");
     FILE *fmap = fopen(gamemaps_path, "rb");
-    if (!fhead || !fmap) {
+    if (!fhead || !fmap)
+    {
         printf("Failed to open files.\n");
         return NULL;
     }
@@ -325,7 +384,8 @@ int* load_map_plane0(const char* maphead_path, const char* gamemaps_path, int ma
     fread(maphead.headerOffsets, sizeof(long), NUMMAPS, fhead);
 
     long offset = maphead.headerOffsets[map_number];
-    if (offset <= 0) {
+    if (offset <= 0)
+    {
         printf("Invalid map offset.\n");
         return NULL;
     }
@@ -343,8 +403,8 @@ int* load_map_plane0(const char* maphead_path, const char* gamemaps_path, int ma
     byte *compressed = malloc(planeLength);
     fread(compressed, 1, planeLength, fmap);
 
-    word expandedLength = *(word*)compressed;
-    word *carmack_source = (word*)(compressed + 2);
+    word expandedLength = *(word *)compressed;
+    word *carmack_source = (word *)(compressed + 2);
     word *carmack_output = malloc(expandedLength);
 
     CAL_CarmackExpand(carmack_source, carmack_output, expandedLength);
@@ -356,13 +416,16 @@ int* load_map_plane0(const char* maphead_path, const char* gamemaps_path, int ma
 
     // Copy to int[]
     int *final_map = malloc(PLANESIZE * sizeof(int));
-    for (int i = 0; i < PLANESIZE; i++) {
-        if (rlew_output[i] < AREATILE){
+    for (int i = 0; i < PLANESIZE; i++)
+    {
+        if (rlew_output[i] < AREATILE)
+        {
             final_map[i] = rlew_output[i];
-        }else{
+        }
+        else
+        {
             final_map[i] = 0;
         }
-        
     }
 
     free(compressed);
@@ -374,10 +437,12 @@ int* load_map_plane0(const char* maphead_path, const char* gamemaps_path, int ma
     return final_map;
 }
 
-int* load_map_plane1(const char* maphead_path, const char* gamemaps_path, int map_number, float* opx, float *opy, float *opa) {
+int *load_map_plane1(const char *maphead_path, const char *gamemaps_path, int map_number, float *opx, float *opy, float *opa)
+{
     FILE *fhead = fopen(maphead_path, "rb");
     FILE *fmap = fopen(gamemaps_path, "rb");
-    if (!fhead || !fmap) {
+    if (!fhead || !fmap)
+    {
         printf("Failed to open files.\n");
         return NULL;
     }
@@ -388,7 +453,8 @@ int* load_map_plane1(const char* maphead_path, const char* gamemaps_path, int ma
     fread(maphead.headerOffsets, sizeof(long), NUMMAPS, fhead);
 
     long offset = maphead.headerOffsets[map_number];
-    if (offset <= 0) {
+    if (offset <= 0)
+    {
         printf("Invalid map offset.\n");
         return NULL;
     }
@@ -406,8 +472,8 @@ int* load_map_plane1(const char* maphead_path, const char* gamemaps_path, int ma
     byte *compressed = malloc(planeLength);
     fread(compressed, 1, planeLength, fmap);
 
-    word expandedLength = *(word*)compressed;
-    word *carmack_source = (word*)(compressed + 2);
+    word expandedLength = *(word *)compressed;
+    word *carmack_source = (word *)(compressed + 2);
     word *carmack_output = malloc(expandedLength);
 
     CAL_CarmackExpand(carmack_source, carmack_output, expandedLength);
@@ -417,18 +483,52 @@ int* load_map_plane1(const char* maphead_path, const char* gamemaps_path, int ma
 
     CA_RLEWexpand(rlew_source, rlew_output, PLANESIZE * 2, maphead.RLEWtag);
 
-    //find starting pos/angle
+    // find starting pos/angle
     int face;
-    int startP=0;
+    int curP = 0;
+    int startP = 0;
     int *final_map = malloc(PLANESIZE * sizeof(int));
-    for (int i = 0; i < PLANESIZE; i++) {
-        if (rlew_output[i] >=19 && rlew_output[i]<=22){
-            face = rlew_output[i];
-            break;
-        }else{
-            startP++;
-            continue;
+    for (int i = 0; i < PLANESIZE; i++)
+    {
+        uint8_t tile = rlew_output[i];
+        if (tile >= 19 && tile <= 22)
+        {
+            face = tile;
+            startP = curP;
         }
+
+        // not sure the best way to do this it will get nasty
+        // 180 - 183	Standing Guard	Hard
+        // 144 - 147	Standing Guard	Medium
+        // 108 - 111
+
+        // guards
+        if ((tile >= 180 && tile <= 183) || (tile >= 144 && tile <= 147) || (tile >= 108 && tile <= 111))
+        {
+            sp[nextSprite].type = 1;
+            sp[nextSprite].state = 1;
+            sp[nextSprite].map = 50;
+            sp[nextSprite].x = (curP % 64) * 64 +32;
+            sp[nextSprite].y = (curP / 64) * 64 +32;
+            sp[nextSprite].z = 20;
+            nextSprite++;
+        }
+
+        // its a static
+
+        if (tile >= 23 && tile <= 73)
+        {
+            int statTile = tile - 23;
+            int staticSprIndex = 2 + statTile;
+            sp[nextSprite].type = 1;
+            sp[nextSprite].state = 1;
+            sp[nextSprite].map = staticSprIndex;
+            sp[nextSprite].x = (curP % 64) * 64 +32;
+            sp[nextSprite].y = (curP / 64) * 64 +32;
+            sp[nextSprite].z = 20;
+            nextSprite++;
+        }
+        curP++;
     }
 
     int startX = startP % 64;
@@ -439,19 +539,20 @@ int* load_map_plane1(const char* maphead_path, const char* gamemaps_path, int ma
     free(rlew_output);
     fclose(fhead);
     fclose(fmap);
-    printf("\n\nstart found x%f y%f a%d\n\n",(float)startX,(float)startY,face);
-    *opx=(float)startX*64;
-    *opy=(float)startY*64;
-    *opa=(float)(face - 19) * (PI / 2);
+    *opx = (float)startX * 64;
+    *opy = (float)startY * 64;
+    *opa = (float)(face - 19) * (PI / 2);
 
-    //adjust for this engines quirks
-    *opa=*opa-(PI/2);
+    // adjust for this engines quirks
+    *opa = *opa - (PI / 2);
     return 0;
 }
 
-void LoadPalette(const char *filename) {
+void LoadPalette(const char *filename)
+{
     FILE *f = fopen(filename, "r");
-    if (!f) {
+    if (!f)
+    {
         fprintf(stderr, "[ERROR] Couldn't open palette file %s\n", filename);
         exit(1);
     }
@@ -460,7 +561,8 @@ void LoadPalette(const char *filename) {
     fgets(header, sizeof(header), f); // JASC-PAL
     fgets(header, sizeof(header), f); // 0100
     fscanf(f, "%d", &num);            // 256
-    for (int i = 0; i < num; i++) {
+    for (int i = 0; i < num; i++)
+    {
         int r, g, b;
         fscanf(f, "%d %d %d", &r, &g, &b);
         palette[i] = (Color){r, g, b, 255};
@@ -468,7 +570,8 @@ void LoadPalette(const char *filename) {
     fclose(f);
 }
 
-int ReadVSwapHeader(FILE *f) {
+int ReadVSwapHeader(FILE *f)
+{
     uint16_t num_chunks;
     fread(&num_chunks, 2, 1, f);
     fread(&sprite_start, 2, 1, f);
@@ -479,14 +582,16 @@ int ReadVSwapHeader(FILE *f) {
     return num_chunks;
 }
 
-unsigned char *ReadChunk(FILE *f, int offset) {
+unsigned char *ReadChunk(FILE *f, int offset)
+{
     fseek(f, offset, SEEK_SET);
     unsigned char *data = malloc(TEXTURE_SIZE);
     fread(data, 1, TEXTURE_SIZE, f);
     return data;
 }
 
-Image DecodeWallTexture(unsigned char *data) {
+Image DecodeWallTexture(unsigned char *data)
+{
     Image img;
     img.width = TEXTURE_WIDTH;
     img.height = TEXTURE_HEIGHT;
@@ -494,8 +599,10 @@ Image DecodeWallTexture(unsigned char *data) {
     img.mipmaps = 1;
     Color *pixels = malloc(sizeof(Color) * TEXTURE_SIZE);
 
-    for (int y = 0; y < TEXTURE_HEIGHT; y++) {
-        for (int x = 0; x < TEXTURE_WIDTH; x++) {
+    for (int y = 0; y < TEXTURE_HEIGHT; y++)
+    {
+        for (int x = 0; x < TEXTURE_WIDTH; x++)
+        {
             int idx = x * TEXTURE_WIDTH + y; // rotated in
             unsigned char colorIndex = data[idx];
             pixels[y * TEXTURE_WIDTH + x] = palette[colorIndex];
@@ -505,7 +612,8 @@ Image DecodeWallTexture(unsigned char *data) {
     return img;
 }
 
-float dist(float ax, float ay, float bx, float by, float ang){
+float dist(float ax, float ay, float bx, float by, float ang)
+{
     return (sqrt((bx - ax) * (bx - ax) + (by - ay) * (by - ay)));
 }
 
@@ -532,7 +640,7 @@ void drawMap2D()
             float tileY = y * newmapsy;
 
             // Draw tile background
-            //DrawRectangle(tileX, tileY, newmaps, newmapsy, BLACK);
+            // DrawRectangle(tileX, tileY, newmaps, newmapsy, BLACK);
             if (mapitem >= 1)
             {
                 DrawRectangle(tileX, tileY, newmaps, newmapsy, BLUE);
@@ -543,14 +651,14 @@ void drawMap2D()
             }
 
             // Draw tile number
-            //snprintf(numStr, sizeof(numStr), "%d", mapitem);
-            //DrawText(numStr, tileX + 3, tileY + 3, 10, RAYWHITE);
+            // snprintf(numStr, sizeof(numStr), "%d", mapitem);
+            // DrawText(numStr, tileX + 3, tileY + 3, 10, RAYWHITE);
         }
     }
 
     DrawCircle(px * scalefactor, py * scalefactory, 5, RED);
-    DrawLineEx((Vector2){px * scalefactor, py * scalefactory}, 
-               (Vector2){px * scalefactor + (pdx * 10), py * scalefactory + (pdy * 10)}, 
+    DrawLineEx((Vector2){px * scalefactor, py * scalefactory},
+               (Vector2){px * scalefactor + (pdx * 10), py * scalefactory + (pdy * 10)},
                3.0f, MAROON);
 }
 
@@ -563,9 +671,10 @@ void drawGame()
     int walltexv = -1;
     int walltexh = -1;
 
-    int num_rays=renderWidth;
+    int num_rays = renderWidth;
 
-    ra = pa - DEG2RAD * (FOV / 2);  // Start left edge of FOV
+
+    ra = pa - DEG2RAD * (FOV / 2); // Start left edge of FOV
 
     if (ra < 0)
     {
@@ -614,7 +723,7 @@ void drawGame()
         {
             mx = (int)floor(rx / 64.0);
             my = (int)floor(ry / 64.0);
-            
+
             mp = my * mapX + mx;
             if (mp > 0 && mp < mapX * mapY && map[mp] >= 1 && map[mp] <= AREATILE)
             {
@@ -639,7 +748,7 @@ void drawGame()
         float nTan = -tan(ra);
         if (ra > P2 && ra < P3)
         { // looking left
-            
+
             rx = floor(px / 64.0) * 64.0 - 0.01;
             ry = (px - rx) * nTan + py;
             xo = -64;
@@ -702,11 +811,13 @@ void drawGame()
 
         if (mode)
         {
+            wallDepth[r] = hitdist;
             hitdist *= cos(pa - ra); // Remove fisheye effect
             if (hitdist <= 0)
             {
                 hitdist = 1;
             }
+            
             float lineH = (mapS * renderHeight) / hitdist;
             float ty_step = 64 / (float)lineH;
             float ty_off = 0;
@@ -734,7 +845,7 @@ void drawGame()
             for (pxy = 0; pxy < lineH; pxy++)
             {
                 // printf("walltex: %d   ",walltex);
-                Color c = walltextures[(walltex-1)*2][((int)(ty) * 64) + (int)tx];
+                Color c = walltextures[(walltex - 1) * 2][((int)(ty) * 64) + (int)tx];
                 // shading
                 if (wallSide == 1)
                 {
@@ -765,6 +876,7 @@ void drawGame()
 void init()
 {
     printf("initializing...");
+    nextSprite = 0;
     mode = true;
     px = 0;
     py = 0;
@@ -773,7 +885,7 @@ void init()
     vdep = 300;
     shootFrame = 0;
     maxspeed = 300;   // max running speed
-    turnspeed = 3.0f; // turning
+    turnspeed = 2.5f; // turning
 
     printf("loading textures...");
 
@@ -781,42 +893,42 @@ void init()
     FILE *f = fopen(VSWAP_FILE, "rb");
     int num_chunks = ReadVSwapHeader(f);
 
-    for(int texnum=0;texnum<100;texnum++){
+    for (int texnum = 0; texnum < 100; texnum++)
+    {
         unsigned char *data = ReadChunk(f, chunk_offsets[texnum]);
         Image img = DecodeWallTexture(data);
-        walltextures[texnum]=LoadImageColors(img);
+        walltextures[texnum] = LoadImageColors(img);
         UnloadImage(img);
     }
 
-    
-    //what level
-    int clevel=0;
-    printf("loading map data for level %d",clevel+1);
+    // what level
+    int clevel = 0;
+    printf("loading map data and textures for level %d", clevel + 1);
     map = load_map_plane0("MAPHEAD.WL6", "GAMEMAPS.WL6", clevel);
-    if (!map) {
+    if (!map)
+    {
         fprintf(stderr, "Failed to load map from files.\n");
     }
 
-    load_map_plane1("MAPHEAD.WL6", "GAMEMAPS.WL6", clevel,&px,&py,&pa);
+    load_map_plane1("MAPHEAD.WL6", "GAMEMAPS.WL6", clevel, &px, &py, &pa);
 
+    // ammo 28
+    // guard 50
+    // blueguard 138
+    printf("loading sprites...");
+    for (int sprnum = 0; sprnum < 100; sprnum++)
+    {
+        Image img = stxloadVSWAP_Sprite("VSWAP.WL6", sprnum);
+        spTex[sprnum] = LoadTextureFromImage(img);
+        UnloadImage(img);
+    }
 
-    //ammo 28
-    //soldier1 50
-    Image img=stxloadVSWAP_Sprite("VSWAP.WL6",138);
-    testSpriteTex = LoadTextureFromImage(img);
-    UnloadImage(img);
-    
-    
     printf("starting game...");
-
-    sp[0].type=1; sp[0].state=1; sp[0].map=0; sp[0].x=px; sp[0].y=py;   sp[0].z=20; //key
-
-
-
 }
 
 void buttons()
 {
+    // Handle turning
     if (IsKeyDown(KEY_A))
     {
         pa -= turnspeed * dt;
@@ -828,11 +940,14 @@ void buttons()
         if (pa > TPI) pa -= TPI;
     }
 
+    // Direction vector
     pdx = cos(pa);
     pdy = sin(pa);
 
+    // Base movement speed
     speed = 0;
 
+    // Forward/Backward
     if (IsKeyDown(KEY_W))
     {
         speed = maxspeed;
@@ -842,16 +957,51 @@ void buttons()
         speed = -maxspeed;
     }
 
+    // Sprinting
+    if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))
+    {
+        speed *= 3.0f;
+    }
+
+    // Strafing with comma (left) and period (right)
+    if (IsKeyDown(KEY_PERIOD))
+    {
+        // perpendicular left
+        px -= pdy * maxspeed * dt;
+        py += pdx * maxspeed * dt;
+    }
+    if (IsKeyDown(KEY_COMMA))
+    {
+        // perpendicular right
+        px += pdy * maxspeed * dt;
+        py -= pdx * maxspeed * dt;
+    }
+
+    // Toggle map view
     if (IsKeyPressed(KEY_TAB))
     {
         mode = !mode;
     }
 
-    if (IsKeyPressed(KEY_SPACE) && !shooting)
+    // Resolution down
+    if (IsKeyPressed(KEY_M))
     {
-        shooting = true;
+        renderHeight -= 50;
+        renderWidth -= 80;
+        renderTex = LoadRenderTexture(renderWidth, renderHeight);
+        printf("New Reso %dx%d\n", renderWidth, renderHeight);
+    }
+
+    // Resolution up
+    if (IsKeyPressed(KEY_N))
+    {
+        renderHeight += 50;
+        renderWidth += 80;
+        renderTex = LoadRenderTexture(renderWidth, renderHeight);
+        printf("New Reso %dx%d\n", renderWidth, renderHeight);
     }
 }
+
 
 void playerMovement()
 {
@@ -876,35 +1026,32 @@ void playerMovement()
     {
         py = next_py;
     }
-
 }
 
 int main(void)
 {
 
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
-    InitWindow(screenWidth, screenHeight, "Raytest");
+    InitWindow(screenWidth, screenHeight, "JCWolf");
     init();
     renderTex = LoadRenderTexture(renderWidth, renderHeight);
-    
- 
 
     SetTargetFPS(60);
 
     while (!WindowShouldClose())
     {
-        
 
         dt = GetFrameTime();
 
         buttons();
         playerMovement();
 
-        
         BeginTextureMode(renderTex);
         ClearBackground(DARKGRAY);
         DrawRectangle(0, renderHeight / 2, renderWidth, renderHeight / 2, GRAY);
         drawGame();
+
+        sortSprites();
         drawSprite();
 
         if (shooting)
@@ -917,41 +1064,38 @@ int main(void)
             }
         }
 
-        //if (mode)
+        // if (mode)
         //{
 
-            //DrawTextureRec(testSpriteTex, (Rectangle){0, 0, 64, 64}, (Vector2){32, 32}, WHITE);
-            //DrawTexturePro(gun_tex, (Rectangle){(int)shootFrame * 64, 0, 64, 64}, (Rectangle){130, 300, 256, 256}, (Vector2){0, 0}, 0, WHITE);
-            // DrawTextureEx(gun_tex, (Vector2){drawX, drawY}, 0.0f, scale, WHITE);
+        // DrawTextureRec(testSpriteTex, (Rectangle){0, 0, 64, 64}, (Vector2){32, 32}, WHITE);
+        // DrawTexturePro(gun_tex, (Rectangle){(int)shootFrame * 64, 0, 64, 64}, (Rectangle){130, 300, 256, 256}, (Vector2){0, 0}, 0, WHITE);
+        //  DrawTextureEx(gun_tex, (Vector2){drawX, drawY}, 0.0f, scale, WHITE);
         //}
 
         char myString[50];
         char floatString[20];
-        snprintf(myString, 50, "Raytest x%f y%f  ANG: %f", px,py, pa);
+        snprintf(myString, 50, "JCWOLF_C x%f y%f  ANG: %f", px, py, pa);
         DrawText(myString, 10, 10, 20, BLACK);
         EndTextureMode();
-
 
         BeginDrawing();
         ClearBackground(BLACK);
 
-        screenWidth=GetScreenWidth(); 
-        screenHeight=GetScreenHeight(); 
+        screenWidth = GetScreenWidth();
+        screenHeight = GetScreenHeight();
 
         // scale to full screen
         DrawTexturePro(
             renderTex.texture,
             (Rectangle){0, 0, renderWidth, -renderHeight}, // flip Y axis for RenderTexture
-            (Rectangle){0, 0, screenWidth, screenHeight}, // stretch to window size
+            (Rectangle){0, 0, screenWidth, screenHeight},  // stretch to window size
             (Vector2){0, 0},
             0.0f,
-            WHITE
-        );
+            WHITE);
 
         // optionally draw HUD here if you want it full-res (e.g. overlays)
 
         EndDrawing();
-
     }
 
     CloseWindow();
