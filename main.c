@@ -17,6 +17,9 @@
 #define MAPPLANES 3
 #define PLANESIZE (64*64)
 #define AREATILE 90
+#define SPRITE_WIDTH 64
+#define SPRITE_HEIGHT 64
+#define SPRITE_DIM 64
 
 typedef unsigned char byte;
 typedef unsigned short word;
@@ -38,9 +41,11 @@ typedef struct {
 const char *VSWAP_FILE = "VSWAP.WL6";
 const char *PAL_FILE = "wolf.pal";
 
+Texture2D testSpriteTex;
+
 unsigned int chunk_offsets[MAX_CHUNKS];
 int sprite_start = 0;
-int TEX_OFFSET;
+
 Color palette[256];
 
 const float TPI = 2 * PI;
@@ -93,6 +98,136 @@ Texture2D wall2tex;
 
 
 Color *walltextures[340];
+
+typedef struct {
+ int type;           //static, key, enemy
+ int state;          //on off
+ int map;            //texture to show
+ float x,y,z;        //position
+}sprite; 
+
+sprite sp[4];
+
+Image stxloadVSWAP_Sprite(const char *filename, int desiredSpr) {
+    FILE *f = fopen(filename, "rb");
+    if (!f) {
+        fprintf(stderr, "Error opening %s\n", filename);
+        exit(1);
+    }
+
+    uint16_t totalChunks, spriteStart, soundStart;
+    fread(&totalChunks, sizeof(uint16_t), 1, f);
+    fread(&spriteStart, sizeof(uint16_t), 1, f);
+    fread(&soundStart, sizeof(uint16_t), 1, f);
+
+    uint32_t *offsets = malloc(totalChunks * sizeof(uint32_t));
+    fread(offsets, sizeof(uint32_t), totalChunks, f);
+    uint16_t *sizes = malloc(totalChunks * sizeof(uint16_t));
+    fread(sizes, sizeof(uint16_t), totalChunks, f);
+
+    int sprNum = spriteStart + desiredSpr;
+    fseek(f, offsets[sprNum], SEEK_SET);
+    uint8_t *spr = malloc(sizes[sprNum]);
+    fread(spr, 1, sizes[sprNum], f);
+    fclose(f);
+
+    int16_t leftpix = *(int16_t *)&spr[0];
+    int16_t rightpix = *(int16_t *)&spr[2];
+    int colcount = rightpix - leftpix + 1;
+
+    uint16_t *cmd_offsets = (uint16_t *)(spr + 4);
+    uint8_t tmp[SPRITE_DIM * SPRITE_DIM] = {0};
+
+    for (int col = 0; col < colcount; col++) {
+        int x = leftpix + col;
+        int ptr = cmd_offsets[col];
+
+        while (1) {
+            if (ptr + 6 > sizes[sprNum]) break;
+
+            int16_t endY2    = spr[ptr]     | (spr[ptr + 1] << 8);
+            int16_t dataOff  = spr[ptr + 2] | (spr[ptr + 3] << 8);
+            int16_t startY2  = spr[ptr + 4] | (spr[ptr + 5] << 8);
+
+            if (endY2 == 0) break;
+
+            int top    = startY2 / 2;
+            int bottom = endY2 / 2;
+
+            int n = top + dataOff;
+
+
+            for (int y = top; y < bottom && n < sizes[sprNum]; y++) {
+                if (x >= 0 && x < SPRITE_DIM && y >= 0 && y < SPRITE_DIM)
+                    tmp[y * SPRITE_DIM + x] = spr[n];
+                n++;
+            }
+
+            ptr += 6;
+        }
+    }
+
+    Color *pixels = malloc(sizeof(Color) * SPRITE_DIM * SPRITE_DIM);
+    for (int y = 0; y < SPRITE_DIM; y++) {
+        for (int x = 0; x < SPRITE_DIM; x++) {
+            int idx = tmp[y * SPRITE_DIM + x];
+            if (idx > 0){
+                //printf("%d PIXEL ",idx);
+                pixels[y * SPRITE_DIM + x] = palette[idx];
+            }else{pixels[y * SPRITE_DIM + x] = (Color){0, 0, 0, 0};}
+                
+        }
+    }
+
+    free(offsets);
+    free(sizes);
+    free(spr);
+
+    Image img = {
+        .data = pixels,
+        .width = SPRITE_DIM,
+        .height = SPRITE_DIM,
+        .mipmaps = 1,
+        .format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8
+    };
+    return img;
+}
+
+
+void drawSprite()
+{
+    int s=0;
+
+    float sx=sp[s].x-px; //temp float variables
+    float sy=sp[s].y-py;
+    float sz=sp[s].z;
+
+    float CS=cos(-pa), SN=sin(-pa); // correct direction
+
+    float a=sy*CS+sx*SN; 
+    float b=sx*CS-sy*SN; 
+    sx=a; sy=b;
+
+    sx = (sx * renderWidth / sy) + (renderWidth / 2);
+    sy = (sz * renderHeight / sy) + (renderHeight / 2);
+
+
+    float scale=32*80/b;   //scale sprite based on distance
+    if(scale<0){ scale=0;} 
+
+    //DrawRectangle(sx,sy,scale,scale, BLUE);
+    //DrawTextureRec(testSpriteTex, (Rectangle){0, 0, 64, 64}, (Vector2){32, 32}, WHITE);
+    DrawTexturePro(
+    testSpriteTex,
+    (Rectangle){0, 0, 64, 64},              
+    (Rectangle){sx - (scale * 2.5), sy - (scale * 4), scale * 5, scale * 5}, 
+    (Vector2){0, 0}, 
+    0.0f,
+    WHITE
+);
+
+ 
+}
 
 void CAL_CarmackExpand (unsigned short *source, unsigned short *dest, unsigned length)
 {
@@ -239,7 +374,6 @@ int* load_map_plane0(const char* maphead_path, const char* gamemaps_path, int ma
     return final_map;
 }
 
-
 int* load_map_plane1(const char* maphead_path, const char* gamemaps_path, int map_number, float* opx, float *opy, float *opa) {
     FILE *fhead = fopen(maphead_path, "rb");
     FILE *fmap = fopen(gamemaps_path, "rb");
@@ -370,10 +504,11 @@ Image DecodeWallTexture(unsigned char *data) {
     img.data = pixels;
     return img;
 }
-float dist(float ax, float ay, float bx, float by, float ang)
-{
+
+float dist(float ax, float ay, float bx, float by, float ang){
     return (sqrt((bx - ax) * (bx - ax) + (by - ay) * (by - ay)));
 }
+
 void drawMap2D()
 {
     int x, y;
@@ -418,7 +553,6 @@ void drawMap2D()
                (Vector2){px * scalefactor + (pdx * 10), py * scalefactory + (pdy * 10)}, 
                3.0f, MAROON);
 }
-
 
 void drawGame()
 {
@@ -666,12 +800,20 @@ void init()
     load_map_plane1("MAPHEAD.WL6", "GAMEMAPS.WL6", clevel,&px,&py,&pa);
 
 
-
+    //ammo 28
+    //soldier1 50
+    Image img=stxloadVSWAP_Sprite("VSWAP.WL6",138);
+    testSpriteTex = LoadTextureFromImage(img);
+    UnloadImage(img);
+    
+    
     printf("starting game...");
+
+    sp[0].type=1; sp[0].state=1; sp[0].map=0; sp[0].x=px; sp[0].y=py;   sp[0].z=20; //key
+
 
 
 }
-
 
 void buttons()
 {
@@ -708,8 +850,6 @@ void buttons()
     if (IsKeyPressed(KEY_SPACE) && !shooting)
     {
         shooting = true;
-        TEX_OFFSET+=1;
-        printf("%d",TEX_OFFSET);
     }
 }
 
@@ -765,6 +905,7 @@ int main(void)
         ClearBackground(DARKGRAY);
         DrawRectangle(0, renderHeight / 2, renderWidth, renderHeight / 2, GRAY);
         drawGame();
+        drawSprite();
 
         if (shooting)
         {
@@ -779,7 +920,7 @@ int main(void)
         //if (mode)
         //{
 
-            // DrawTextureRec(gun_tex, (Rectangle){0, 0, 64, 64}, (Vector2){drawX, drawY}, WHITE);
+            //DrawTextureRec(testSpriteTex, (Rectangle){0, 0, 64, 64}, (Vector2){32, 32}, WHITE);
             //DrawTexturePro(gun_tex, (Rectangle){(int)shootFrame * 64, 0, 64, 64}, (Rectangle){130, 300, 256, 256}, (Vector2){0, 0}, 0, WHITE);
             // DrawTextureEx(gun_tex, (Vector2){drawX, drawY}, 0.0f, scale, WHITE);
         //}
