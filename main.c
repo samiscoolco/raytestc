@@ -23,6 +23,7 @@
 
 typedef unsigned char byte;
 typedef unsigned short word;
+int doorOpenTest = 0;
 
 typedef struct
 {
@@ -52,28 +53,12 @@ const float TPI = 2 * PI;
 const float P2 = PI / 2;
 const float P3 = 3 * PI / 2;
 
-int screenWidth = 640;
-int screenHeight = 480;
-
-// insane performance
-// int renderWidth = 120;
-// int renderHeight =  80;
-
-// gameboy
-//  int renderWidth = 240;
-//  int renderHeight =  160;
+int screenWidth = 320;
+int screenHeight = 200;
 
 // native
 int renderWidth = 320;
 int renderHeight = 200;
-
-// doubled
-// int renderWidth = 640;
-// int renderHeight =  400;
-
-// ULTRA
-// int renderWidth = 1280;
-// int renderHeight =  800;
 
 // foolish
 float wallDepth[2000];
@@ -225,6 +210,10 @@ void drawDoors()
             bool vertical = (tile == 90);
             float doorX = x * 64 + 32;
             float doorY = y * 64 + 32;
+            
+            //vert/hor doors
+            //doorX += doorOpenTest;
+            doorY += doorOpenTest;
 
             // Angle to center of door
             float dx = doorX - px;
@@ -272,6 +261,7 @@ void drawDoors()
 
                 float tx = vertical ? (hitY - (y * 64)) : (hitX - (x * 64));
                 int texX = (int)(tx / 64.0f * 64.0f);
+                texX -= doorOpenTest;
                 if (texX < 0)
                 {
                     continue;
@@ -1012,7 +1002,7 @@ void init()
     UnloadImage(img);
 
     // what level
-    int clevel = 0;
+    int clevel = 4;
     printf("loading map data and textures for level %d", clevel + 1);
     map = load_map_plane0("MAPHEAD.WL6", "GAMEMAPS.WL6", clevel);
     if (!map)
@@ -1095,6 +1085,16 @@ void buttons()
         mode = !mode;
     }
 
+    if (IsKeyPressed(KEY_H))
+    {
+        doorOpenTest += 2;
+    }
+
+    if (IsKeyPressed(KEY_J))
+    {
+        doorOpenTest -= 2;
+    }
+
     // Resolution down
     if (IsKeyPressed(KEY_M))
     {
@@ -1167,14 +1167,18 @@ int main(void)
         sortSprites();
         drawSprites();
 
-        if (shooting)
+        if (shootFrame > 5)
         {
-            shootFrame += 15 * dt;
-            if (shootFrame >= 3)
-            {
-                shootFrame = 0;
-                shooting = false;
+            
+            doorOpenTest+=1;
+            shootFrame = 0;
+            if(doorOpenTest>70){
+                doorOpenTest=0;
             }
+        }
+        else
+        {
+            shootFrame += 100 * dt;
         }
 
         // if (mode)
