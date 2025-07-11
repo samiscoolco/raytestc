@@ -76,7 +76,7 @@ int renderHeight = 200;
 // int renderHeight =  800;
 
 // foolish
-float wallDepth[3000];
+float wallDepth[2000];
 
 RenderTexture2D renderTex;
 
@@ -88,7 +88,7 @@ float dt;
 bool mode;
 int vdep;
 
-Texture2D gun_tex;
+Texture2D doorTexture2d;
 float shootFrame;
 bool shooting;
 
@@ -96,8 +96,8 @@ int mapS = 64;
 int mapX = 64, mapY = 64;
 int *map;
 
-Texture2D spTex[340];
-Color *walltextures[340];
+Texture2D spTex[125];
+Color *walltextures[125];
 
 typedef struct
 {
@@ -211,7 +211,96 @@ Image stxloadVSWAP_Sprite(const char *filename, int desiredSpr)
     return img;
 }
 
-void drawSprite()
+void drawDoors()
+{
+    for (int y = 0; y < mapY; y++)
+    {
+        for (int x = 0; x < mapX; x++)
+        {
+            int i = y * mapX + x;
+            int tile = map[i];
+            if (tile != 90 && tile != 91)
+                continue;
+
+            bool vertical = (tile == 90);
+            float doorX = x * 64 + 32;
+            float doorY = y * 64 + 32;
+
+            // Angle to center of door
+            float dx = doorX - px;
+            float dy = doorY - py;
+            float distToDoor = sqrtf(dx * dx + dy * dy);
+            float angleToDoor = atan2f(dy, dx) - pa;
+
+            while (angleToDoor < -PI)
+                angleToDoor += TPI;
+            while (angleToDoor > PI)
+                angleToDoor -= TPI;
+
+            // Approx screen X of door center
+            float centerX = (angleToDoor / (DEG2RAD * FOV)) * renderWidth + (renderWidth / 2);
+
+            // Door angle width (depends on orientation)
+            float halfWidth = atan2f(32, distToDoor);
+            int screenX1 = (int)((angleToDoor - halfWidth) / (DEG2RAD * FOV) * renderWidth + renderWidth / 2);
+            int screenX2 = (int)((angleToDoor + halfWidth) / (DEG2RAD * FOV) * renderWidth + renderWidth / 2);
+
+            if (screenX1 < 0)
+                screenX1 = 0;
+            if (screenX2 >= renderWidth)
+                screenX2 = renderWidth - 1;
+
+            for (int sx = screenX1; sx <= screenX2; sx++)
+            {
+                float rayAngle = ((float)sx - renderWidth / 2.0f) / renderWidth * (DEG2RAD * FOV);
+                float actualAngle = pa + rayAngle;
+
+                float rayDirX = cosf(actualAngle);
+                float rayDirY = sinf(actualAngle);
+
+                // Ray intersection with door plane
+                float denom = vertical ? rayDirX : rayDirY;
+                if (fabs(denom) < 0.0001f)
+                    continue;
+
+                float planeOffset = vertical ? (doorX - px) / rayDirX : (doorY - py) / rayDirY;
+                if (planeOffset < 0.1f)
+                    continue;
+
+                float hitX = px + rayDirX * planeOffset;
+                float hitY = py + rayDirY * planeOffset;
+
+                float tx = vertical ? (hitY - (y * 64)) : (hitX - (x * 64));
+                int texX = (int)(tx / 64.0f * 64.0f);
+                if (texX < 0)
+                {
+                    continue;
+                }
+                if (texX > 63)
+                {
+                    continue;
+                }
+
+                float correctedDist = planeOffset * cosf(rayAngle);
+                float lineH = (64 * renderHeight) / correctedDist;
+                float lineY = (renderHeight / 2) - (lineH / 2);
+
+                // Occlusion
+                if (sx >= 0 && sx < renderWidth && correctedDist < wallDepth[sx])
+                {
+
+                    Rectangle src = {(float)texX, 0, 1, 64};
+                    Rectangle dst = {(float)sx, lineY, 1, lineH};
+                    DrawTexturePro(doorTexture2d, src, dst, (Vector2){0, 0}, 0.0f, WHITE);
+
+                    wallDepth[sx] = correctedDist;
+                }
+            }
+        }
+    }
+}
+
+void drawSprites()
 {
     for (int s = 0; s < nextSprite; s++)
     {
@@ -234,9 +323,8 @@ void drawSprite()
         float scale = (renderHeight / 2.0f) / b;
         if (scale < 0)
             scale = 0;
-            
-        scale=scale*30;
 
+        scale = scale * 30;
 
         float sprLeft = sx - (scale * 2.5f);
         float sprRight = sx + (scale * 2.5f);
@@ -840,7 +928,6 @@ void drawGame()
                 lineH = renderHeight;
             }
             float lineO = (renderHeight / 2) - lineH / 2;
-            lineO = lineO;
 
             int pxy;
             float ty = ty_off * ty_step;
@@ -856,12 +943,7 @@ void drawGame()
 
             for (pxy = 0; pxy < lineH; pxy++)
             {
-                if (wallSide == 0 && (map[hitp + 1] >= 90 || map[hitp - 1] >= 90))
-                {
-                    walltex = 51;
-                }
-
-                if (wallSide == 1 && (map[hitp + 64] >= 90 || map[hitp - 64] >= 90))
+                if ((wallSide == 0 && (map[hitp + 1] >= 90 || map[hitp - 1] >= 90)) || (wallSide == 1 && (map[hitp + 64] >= 90 || map[hitp - 64] >= 90)))
                 {
                     walltex = 51;
                 }
@@ -876,7 +958,7 @@ void drawGame()
                     c.b = c.b * 0.5;
                 }
 
-                DrawRectangle(r * 1, pxy + lineO, 1, 1, c);
+                DrawRectangle(r, pxy + lineO, 1, 1, c);
                 ty += ty_step;
             }
 
@@ -923,12 +1005,11 @@ void init()
         UnloadImage(img);
     }
 
-    int texnum = 50;
+    int texnum = 98;
     unsigned char *data = ReadChunk(f, chunk_offsets[texnum]);
     Image img = DecodeWallTexture(data);
-    walltextures[texnum] = LoadImageColors(img);
+    doorTexture2d = LoadTextureFromImage(img);
     UnloadImage(img);
-    printf("\n\n %d wtf \n\n", walltextures[texnum]->r);
 
     // what level
     int clevel = 0;
@@ -1067,6 +1148,7 @@ int main(void)
     renderTex = LoadRenderTexture(renderWidth, renderHeight);
 
     SetTargetFPS(60);
+    char myString[50];
 
     while (!WindowShouldClose())
     {
@@ -1080,9 +1162,10 @@ int main(void)
         ClearBackground(DARKGRAY);
         DrawRectangle(0, renderHeight / 2, renderWidth, renderHeight / 2, GRAY);
         drawGame();
+        drawDoors();
 
         sortSprites();
-        drawSprite();
+        drawSprites();
 
         if (shooting)
         {
@@ -1102,10 +1185,6 @@ int main(void)
         //  DrawTextureEx(gun_tex, (Vector2){drawX, drawY}, 0.0f, scale, WHITE);
         //}
 
-        char myString[50];
-        char floatString[20];
-        snprintf(myString, 50, "JCWOLF_C x%f y%f  ANG: %f", px, py, pa);
-        DrawText(myString, 10, 10, 20, BLACK);
         EndTextureMode();
 
         BeginDrawing();
@@ -1124,7 +1203,8 @@ int main(void)
             WHITE);
 
         // optionally draw HUD here if you want it full-res (e.g. overlays)
-
+        snprintf(myString, 50, "JCWOLF x%f y%f fps: %d", px, py, GetFPS());
+        DrawText(myString, 10, 10, 22, BLACK);
         EndDrawing();
     }
 
