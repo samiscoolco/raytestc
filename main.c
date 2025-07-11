@@ -46,7 +46,6 @@ unsigned int chunk_offsets[MAX_CHUNKS];
 int sprite_start = 0;
 int nextSprite = 0;
 
-
 Color palette[256];
 
 const float TPI = 2 * PI;
@@ -76,7 +75,7 @@ int renderHeight = 200;
 // int renderWidth = 1280;
 // int renderHeight =  800;
 
-//foolish
+// foolish
 float wallDepth[3000];
 
 RenderTexture2D renderTex;
@@ -226,13 +225,18 @@ void drawSprite()
         sx = a;
         sy = b;
 
-        if (b <= 0.1f) continue; // sprite is behind player
+        if (b <= 0.1f)
+            continue; // sprite is behind player
 
         sx = (sx * renderWidth / sy) + (renderWidth / 2);
         sy = (sz * renderHeight / sy) + (renderHeight / 2);
 
-        float scale = (32 * 80) / b;
-        if (scale < 0) scale = 0;
+        float scale = (renderHeight / 2.0f) / b;
+        if (scale < 0)
+            scale = 0;
+            
+        scale=scale*30;
+
 
         float sprLeft = sx - (scale * 2.5f);
         float sprRight = sx + (scale * 2.5f);
@@ -242,14 +246,15 @@ void drawSprite()
         int centerColumn = (int)sx;
         if (centerColumn >= 0 && centerColumn < renderWidth)
         {
-            if (b > wallDepth[centerColumn]) continue; // sprite is behind wall
+            if (b > wallDepth[centerColumn])
+                continue; // sprite is behind wall
         }
 
         // Draw the sprite
         DrawTexturePro(
             spTex[sp[s].map],
             (Rectangle){0, 0, 64, 64},
-            (Rectangle){sprLeft, sy - (scale * 4), scale * 5, scale * 5},
+            (Rectangle){sx - (scale * 2.5), sy - (scale * 4), scale * 5, scale * 5},
             (Vector2){0, 0},
             0.0f,
             WHITE);
@@ -418,7 +423,7 @@ int *load_map_plane0(const char *maphead_path, const char *gamemaps_path, int ma
     int *final_map = malloc(PLANESIZE * sizeof(int));
     for (int i = 0; i < PLANESIZE; i++)
     {
-        if (rlew_output[i] < AREATILE)
+        if (rlew_output[i] <= 92)
         {
             final_map[i] = rlew_output[i];
         }
@@ -508,8 +513,8 @@ int *load_map_plane1(const char *maphead_path, const char *gamemaps_path, int ma
             sp[nextSprite].type = 1;
             sp[nextSprite].state = 1;
             sp[nextSprite].map = 50;
-            sp[nextSprite].x = (curP % 64) * 64 +32;
-            sp[nextSprite].y = (curP / 64) * 64 +32;
+            sp[nextSprite].x = (curP % 64) * 64 + 32;
+            sp[nextSprite].y = (curP / 64) * 64 + 32;
             sp[nextSprite].z = 20;
             nextSprite++;
         }
@@ -523,8 +528,8 @@ int *load_map_plane1(const char *maphead_path, const char *gamemaps_path, int ma
             sp[nextSprite].type = 1;
             sp[nextSprite].state = 1;
             sp[nextSprite].map = staticSprIndex;
-            sp[nextSprite].x = (curP % 64) * 64 +32;
-            sp[nextSprite].y = (curP / 64) * 64 +32;
+            sp[nextSprite].x = (curP % 64) * 64 + 32;
+            sp[nextSprite].y = (curP / 64) * 64 + 32;
             sp[nextSprite].z = 20;
             nextSprite++;
         }
@@ -670,9 +675,13 @@ void drawGame()
     int walltex = -1;
     int walltexv = -1;
     int walltexh = -1;
+    int wallAdjacenth = 0;
+    int wallAdjacentv = 0;
+    int hitph = 0;
+    int hitpv = 0;
+    int hitp = 0;
 
     int num_rays = renderWidth;
-
 
     ra = pa - DEG2RAD * (FOV / 2); // Start left edge of FOV
 
@@ -690,7 +699,6 @@ void drawGame()
     }
     for (int r = 0; r < num_rays; r++)
     {
-
         // check hor lines
         float disH = 1000000, hx = px, hy = py;
         // depth of field
@@ -725,14 +733,15 @@ void drawGame()
             my = (int)floor(ry / 64.0);
 
             mp = my * mapX + mx;
-            if (mp > 0 && mp < mapX * mapY && map[mp] >= 1 && map[mp] <= AREATILE)
+            if (mp > 0 && mp < mapX * mapY && map[mp] >= 1 && map[mp] < AREATILE)
             {
                 // hit wall
                 hx = rx;
                 hy = ry;
                 disH = dist(px, py, hx, hy, ra);
-                dof = vdep;
                 walltexh = map[mp];
+                hitph = mp;
+                dof = vdep;
             }
             else
             {
@@ -774,13 +783,14 @@ void drawGame()
 
             mp = my * mapX + mx;
 
-            if (mp > 0 && mp < mapX * mapY && map[mp] >= 1 && map[mp] <= AREATILE)
+            if (mp > 0 && mp < mapX * mapY && map[mp] >= 1 && map[mp] < AREATILE)
             {
                 vx = rx;
                 vy = ry;
                 disV = dist(px, py, vx, vy, ra);
                 dof = vdep; // hit wall
                 walltexv = map[mp];
+                hitpv = mp;
             }
             else
             {
@@ -799,6 +809,7 @@ void drawGame()
             hitdist = disV;
             wallSide = 0;
             walltex = walltexv;
+            hitp = hitpv;
         }
         if (disH < disV)
         {
@@ -807,6 +818,7 @@ void drawGame()
             hitdist = disH;
             wallSide = 1;
             walltex = walltexh;
+            hitp = hitph;
         }
 
         if (mode)
@@ -817,7 +829,7 @@ void drawGame()
             {
                 hitdist = 1;
             }
-            
+
             float lineH = (mapS * renderHeight) / hitdist;
             float ty_step = 64 / (float)lineH;
             float ty_off = 0;
@@ -844,9 +856,19 @@ void drawGame()
 
             for (pxy = 0; pxy < lineH; pxy++)
             {
-                // printf("walltex: %d   ",walltex);
+                if (wallSide == 0 && (map[hitp + 1] >= 90 || map[hitp - 1] >= 90))
+                {
+                    walltex = 51;
+                }
+
+                if (wallSide == 1 && (map[hitp + 64] >= 90 || map[hitp - 64] >= 90))
+                {
+                    walltex = 51;
+                }
+
+                // Color c = walltextures[51][((int)(ty) * 64) + (int)tx];
+                //  shading
                 Color c = walltextures[(walltex - 1) * 2][((int)(ty) * 64) + (int)tx];
-                // shading
                 if (wallSide == 1)
                 {
                     c.r = c.r * 0.5;
@@ -887,19 +909,26 @@ void init()
     maxspeed = 300;   // max running speed
     turnspeed = 2.5f; // turning
 
-    printf("loading textures...");
+    printf("loading textures...  %d", sprite_start);
 
     LoadPalette(PAL_FILE);
     FILE *f = fopen(VSWAP_FILE, "rb");
     int num_chunks = ReadVSwapHeader(f);
 
-    for (int texnum = 0; texnum < 100; texnum++)
+    for (int texnum = 0; texnum < 125; texnum++)
     {
         unsigned char *data = ReadChunk(f, chunk_offsets[texnum]);
         Image img = DecodeWallTexture(data);
         walltextures[texnum] = LoadImageColors(img);
         UnloadImage(img);
     }
+
+    int texnum = 50;
+    unsigned char *data = ReadChunk(f, chunk_offsets[texnum]);
+    Image img = DecodeWallTexture(data);
+    walltextures[texnum] = LoadImageColors(img);
+    UnloadImage(img);
+    printf("\n\n %d wtf \n\n", walltextures[texnum]->r);
 
     // what level
     int clevel = 0;
@@ -932,12 +961,14 @@ void buttons()
     if (IsKeyDown(KEY_A))
     {
         pa -= turnspeed * dt;
-        if (pa < 0) pa += TPI;
+        if (pa < 0)
+            pa += TPI;
     }
     if (IsKeyDown(KEY_D))
     {
         pa += turnspeed * dt;
-        if (pa > TPI) pa -= TPI;
+        if (pa > TPI)
+            pa -= TPI;
     }
 
     // Direction vector
@@ -1001,7 +1032,6 @@ void buttons()
         printf("New Reso %dx%d\n", renderWidth, renderHeight);
     }
 }
-
 
 void playerMovement()
 {
